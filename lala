@@ -1,0 +1,295 @@
+-- Services
+local TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+
+-- Constants
+local PLAYER = Players.LocalPlayer
+local TWEEN_SPEED = 22.3 -- Studs per second
+local NEXT_TWEEN_DELAY = 0 -- Delay before tweening to next coin
+local MAX_DISTANCE = 400 -- Maximum distance before teleporting
+local BELOW_COIN_OFFSET = Vector3.new(0, 5, 0) -- Offset for teleporting 5 studs below coin
+local ROTATION_SPEED = 0 -- Speed for rotating towards the coin
+
+-- Variables
+local ROOT
+local currentTween
+
+-- Function to find the player's HumanoidRootPart
+local function getRootPart()
+    local char = PLAYER.Character
+    if char then
+        return char:FindFirstChild("HumanoidRootPart")
+    end
+    return nil
+end
+
+-- Cleanup function to stop old tweens
+local function cleanup()
+    if currentTween then
+        currentTween:Cancel()
+        currentTween = nil
+    end
+end
+
+-- Function to find all valid MainCoin parts
+local function findAllMainCoins()
+    local coins = {}
+    for _, mapModel in ipairs(Workspace:GetChildren()) do
+        local coinContainer = mapModel:FindFirstChild("CoinContainer")
+        if coinContainer then
+            for _, coinServer in ipairs(coinContainer:GetChildren()) do
+                if coinServer:IsA("BasePart") and coinServer.Name == "Coin_Server" then
+                    local coinVisual = coinServer:FindFirstChild("CoinVisual")
+                    if coinVisual and coinVisual:IsA("BasePart") then
+                        local mainCoin = coinVisual:FindFirstChild("MainCoin")
+                        if mainCoin and mainCoin:IsA("BasePart") and mainCoin.Transparency == 0 then
+                            table.insert(coins, mainCoin)
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return coins
+end
+
+-- Function to get the closest valid MainCoin
+local function getClosestMainCoin()
+    local coins = findAllMainCoins()
+    local closestCoin = nil
+    local shortestDistance = math.huge
+
+    for _, coin in ipairs(coins) do
+        local distance = (coin.Position - ROOT.Position).Magnitude
+        if distance < shortestDistance then
+            shortestDistance = distance
+            closestCoin = coin
+        end
+    end
+    return closestCoin, shortestDistance
+end
+
+-- Function to smoothly rotate the character towards a target position (Full XYZ Look)
+local function rotateToTarget(targetPosition)
+    local lookAtCFrame = CFrame.new(ROOT.Position, targetPosition) -- Look at target in all axes
+    local tweenInfo = TweenInfo.new(ROTATION_SPEED, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+    local tween = TweenService:Create(ROOT, tweenInfo, {CFrame = lookAtCFrame})
+    tween:Play()
+    tween.Completed:Wait()
+end
+
+-- Function to tween the character to a part's position (ignoring rotation)
+local function tweenToPart(part)
+    local targetPosition = part.Position
+    local distance = (targetPosition - ROOT.Position).Magnitude
+    local time = distance / TWEEN_SPEED -- Constant velocity formula
+    
+    -- Preserve current rotation while tweening
+    local goalCFrame = CFrame.new(targetPosition) * CFrame.Angles(ROOT.CFrame:ToEulerAnglesXYZ())
+
+    local tweenInfo = TweenInfo.new(time, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
+    local tween = TweenService:Create(ROOT, tweenInfo, {CFrame = goalCFrame})
+    tween:Play()
+    currentTween = tween -- Store the current tween
+    return tween
+end
+
+-- Function to mark a coin as collected (all parts in CoinVisual)
+local function markCoinAsCollected(coin)
+    local coinVisual = coin.Parent
+    if coinVisual and coinVisual:IsA("BasePart") then
+        for _, child in ipairs(coinVisual:GetChildren()) do
+            if child:IsA("BasePart") then
+                child.Transparency = 0.5
+            end
+        end
+    end
+end
+
+-- Main logic
+task.spawn(function()
+    while true do
+        -- Clean up old tweens or logic
+        cleanup()
+
+        -- Continuously update the HumanoidRootPart to ensure script works after respawn
+        ROOT = getRootPart()
+        if ROOT then
+            local mainCoin, distance = getClosestMainCoin()
+
+            if mainCoin then
+                -- Teleport if too far away (5 studs below the coin)
+                if distance > MAX_DISTANCE then
+                    local belowCoinPosition = mainCoin.Position - BELOW_COIN_OFFSET
+                    ROOT.CFrame = CFrame.new(belowCoinPosition)
+                    task.wait(NEXT_TWEEN_DELAY)
+                end
+
+                -- Rotate towards the coin before tweening
+                rotateToTarget(mainCoin.Position)
+
+                -- Tween to the coin (preserving rotation)
+                local tween = tweenToPart(mainCoin)
+
+                -- Check transparency while tweening
+                local connection
+                connection = mainCoin:GetPropertyChangedSignal("Transparency"):Connect(function()
+                    if mainCoin.Transparency > 0 then
+                        tween:Cancel()
+                        connection:Disconnect()
+                    end
+                end)
+
+                tween.Completed:Wait()
+                if mainCoin.Transparency == 0 then
+                    markCoinAsCollected(mainCoin)
+                end
+                task.wait(NEXT_TWEEN_DELAY) -- Delay before moving to next coin
+            else
+                -- Wait briefly if no coins are found
+                task.wait(0.2)
+            end
+        else
+            -- Wait for the player's character to load
+            task.wait(0.3)
+        end
+    end
+end)
+
+-- flight or smt idk
+
+game.Workspace.Gravity = 0
+
+local Noclip = nil
+local Clip = nil
+
+function noclip()
+    Clip = false
+    local function Nocl()
+        if Clip == false and game.Players.LocalPlayer.Character ~= nil then
+            for _, v in pairs(game.Players.LocalPlayer.Character:GetDescendants()) do
+                if v:IsA('BasePart') and v.CanCollide and v.Name ~= floatName then
+                    v.CanCollide = false
+                end
+            end
+        end
+        wait(0.21) -- basic optimization
+    end
+    Noclip = game:GetService('RunService').Stepped:Connect(Nocl)
+end
+
+function clip()
+    if Noclip then Noclip:Disconnect() end
+    Clip = true
+end
+
+noclip() -- to toggle noclip() and clip()
+
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+
+-- Function to enable PlatformStand for the character
+local function enablePlatformStand(character)
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if humanoid then
+        humanoid.PlatformStand = true
+    end
+end
+
+-- Function to set the velocity of all parts in the character to 0
+local function breakVelocity(character)
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.Velocity = Vector3.zero
+            part.RotVelocity = Vector3.zero
+        end
+    end
+end
+
+-- Connect to CharacterAdded to handle respawns
+player.CharacterAdded:Connect(function(character)
+    task.wait(0.2) -- Add a delay of 0.2 seconds
+    enablePlatformStand(character)
+    breakVelocity(character)
+end)
+
+-- If the character already exists, enable PlatformStand and break velocity immediately
+if player.Character then
+    enablePlatformStand(player.Character)
+    breakVelocity(player.Character)
+end
+
+-- Reset
+
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- Variables for tracking the GUI and TextLabel
+local mainGui
+local coinsLabel
+
+-- Function to reset the character
+local function resetCharacter()
+    local character = player.Character
+    if character then
+        character:BreakJoints()
+    end
+end
+
+-- Function to check the text and reset if needed
+local function checkCoinsText()
+    if coinsLabel and coinsLabel.Text == "40" then
+        resetCharacter()
+    end
+end
+
+-- Function to set up listeners on Coins TextLabel
+local function setupTextLabelListener()
+    -- Ensure we have the Coins TextLabel path
+    if mainGui and mainGui:FindFirstChild("Game") then
+        local gameFrame = mainGui.Game:FindFirstChild("CoinBags")
+        local container = gameFrame and gameFrame:FindFirstChild("Container")
+        local candyFrame = container and container:FindFirstChild("Coin")
+        local currencyFrame = candyFrame and candyFrame:FindFirstChild("CurrencyFrame")
+        local iconLabel = currencyFrame and currencyFrame:FindFirstChild("Icon")
+        coinsLabel = iconLabel and iconLabel:FindFirstChild("Coins")
+
+        if coinsLabel and coinsLabel:IsA("TextLabel") then
+            -- Connect the Changed event to check the text whenever it updates
+            coinsLabel:GetPropertyChangedSignal("Text"):Connect(checkCoinsText)
+        end
+    end
+end
+
+-- Main function to monitor MainGUI availability and character reset handling
+local function monitorMainGUI()
+    -- Initial check if MainGUI exists
+    mainGui = playerGui:FindFirstChild("MainGUI")
+    if mainGui then
+        setupTextLabelListener()
+    end
+
+    -- Listen for MainGUI to be added if it's missing
+    playerGui.DescendantAdded:Connect(function(descendant)
+        if descendant.Name == "MainGUI" and descendant:IsA("ScreenGui") then
+            mainGui = descendant
+            setupTextLabelListener()
+        end
+    end)
+
+    -- Listen for MainGUI removal and clear listeners if removed
+    playerGui.DescendantRemoving:Connect(function(descendant)
+        if descendant == mainGui then
+            mainGui = nil
+            coinsLabel = nil
+        end
+    end)
+end
+
+monitorMainGUI()
+
+game:GetService("RunService"):Set3dRenderingEnabled(false)
+
+local vu = game:GetService("VirtualUser")game:GetService("Players").LocalPlayer.Idled:connect(function() vu:Button2Down(Vector2.new(0,0),workspace.CurrentCamera.CFrame) wait(1) vu:Button2Up(Vector2.new(0,0),workspace.CurrentCamera.CFrame)end)
