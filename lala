@@ -5,7 +5,7 @@ local Workspace = game:GetService("Workspace")
 
 -- Constants
 local PLAYER = Players.LocalPlayer
-local TWEEN_SPEED = 22.3 -- Studs per second
+local TWEEN_SPEED = 22.5 -- Studs per second
 local NEXT_TWEEN_DELAY = 0 -- Delay before tweening to next coin
 local MAX_DISTANCE = 400 -- Maximum distance before teleporting
 local BELOW_COIN_OFFSET = Vector3.new(0, 5, 0) -- Offset for teleporting 5 studs below coin
