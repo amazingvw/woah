@@ -1,10 +1,9 @@
 -----------------------------------
 -- CONFIGURATION
 -----------------------------------
-local MAX_SPEED         = 22.7
-local COIN_BUFFER       = 1
-local COIN_ACQUIRE_DELAY = 1       -- delay before trying next coin
-local MAX_COIN_RANGE     = 300     -- max range to go for coins
+local MAX_SPEED     = 22.7
+local COIN_BUFFER   = 1
+local MIN_DISTANCE  = 300  -- Set your desired threshold for when to move toward a coin (e.g., 50 studs)
 
 local STEER_SPRING  = 45
 local STEER_DAMP    = 1
@@ -19,27 +18,44 @@ local RunService = game:GetService("RunService")
 local player     = Players.LocalPlayer
 
 -----------------------------------
--- COIN VALIDATION
+-- COIN DETECTION + VALIDATION
 -----------------------------------
 local function isCoinValid(coinPart)
 	if not coinPart:IsA("BasePart") or coinPart.Name ~= "Coin_Server" then return false end
 
-	for _, child in ipairs(coinPart:GetChildren()) do
-		if child:IsA("BasePart") and child.Transparency <= 0.1 then
-			return true
+	-- Check for MeshPart or CoinVisual child detection
+	if coinPart:IsA("MeshPart") then
+		-- If it is a MeshPart (Type 1 Coin), check if it's valid (not collected)
+		for _, child in ipairs(coinPart:GetChildren()) do
+			if child:IsA("BasePart") and child.Transparency > 0.1 then
+				return false -- Already collected
+			end
+		end
+	elseif coinPart.Name == "Coin_Server" then
+		-- If Coin_Server has a "CoinVisual" inside it (Type 2 Coin)
+		local coinVisual = coinPart:FindFirstChild("CoinVisual")
+		if coinVisual and coinVisual:IsA("BasePart") then
+			for _, child in ipairs(coinVisual:GetChildren()) do
+				if child:IsA("BasePart") and child.Transparency > 0.1 then
+					return false -- Already collected
+				end
+			end
 		end
 	end
 
-	return false -- no visible children found
+	return true
 end
 
+-- Get closest coin by scanning all descendants
 local function getClosestCoin(hrp)
 	local closest, shortestDist = nil, math.huge
 	for _, descendant in ipairs(workspace:GetDescendants()) do
 		if descendant:IsA("BasePart") and descendant.Name == "Coin_Server" then
-			local dist = (hrp.Position - descendant.Position).Magnitude
-			if dist <= MAX_COIN_RANGE and isCoinValid(descendant) then
-				if dist < shortestDist then
+			-- Skip invalid coins
+			if isCoinValid(descendant) then
+				local dist = (hrp.Position - descendant.Position).Magnitude
+				-- Apply distance threshold to limit the detection range
+				if dist < shortestDist and dist < MIN_DISTANCE then
 					shortestDist = dist
 					closest = descendant
 				end
@@ -58,26 +74,21 @@ local function moveContinuously(char)
 	local rotVel = Vector3.zero
 	local forward = hrp.CFrame.LookVector
 	local targetCoin = nil
-	local lastAcquireTime = 0
 
 	while char.Parent do
 		local dt = RunService.Heartbeat:Wait()
 
-		-- Refresh target coin
-		if (not targetCoin or not targetCoin:IsDescendantOf(workspace) or not isCoinValid(targetCoin)) then
-			if tick() - lastAcquireTime >= COIN_ACQUIRE_DELAY then
-				targetCoin = getClosestCoin(hrp)
-				lastAcquireTime = tick()
-			end
+		-- Refresh target coin if none or invalid
+		if not targetCoin or not targetCoin:IsDescendantOf(workspace) or not isCoinValid(targetCoin) then
+			targetCoin = getClosestCoin(hrp)
 		end
 
-		-- Move only if coin exists
+		-- Move toward coin if valid coin is found within range
 		if targetCoin then
 			local dist = (hrp.Position - targetCoin.Position).Magnitude
 			local radius = targetCoin.Size.Magnitude / 2 + COIN_BUFFER
-
 			if dist <= radius then
-				-- Mark as collected
+				-- Mark coin as collected (fade children)
 				for _, child in ipairs(targetCoin:GetChildren()) do
 					if child:IsA("BasePart") then
 						child.Transparency = 0.5
