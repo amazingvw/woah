@@ -3,7 +3,7 @@
 -----------------------------------
 local MAX_SPEED         = 22.7
 local COIN_BUFFER       = 1
-local MAX_COIN_DISTANCE = 150
+local MAX_COIN_DISTANCE = 400
 
 local VISUAL_LIMIT      = 40
 local NONVISUAL_LIMIT   = 20
