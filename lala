@@ -10,24 +10,26 @@ local ROT_SPRING    = 700
 local ROT_DAMP      = 10
 
 -----------------------------------
--- SERVICES & REFS
+-- SERVICES
 -----------------------------------
 local Players    = game:GetService("Players")
 local RunService = game:GetService("RunService")
-
 local player = Players.LocalPlayer
 
 -----------------------------------
 -- UTILITIES
 -----------------------------------
 local function isValidCoin(model)
-	if model.Name ~= "Coin_Server" then return false end
+	if not model:IsA("Model") or model.Name ~= "Coin_Server" then return false end
+
+	local hasVisiblePart = false
 	for _, part in ipairs(model:GetDescendants()) do
-		if part:IsA("BasePart") and part.Transparency > 0.1 then
-			return false -- Skip if any part inside is transparent
+		if part:IsA("BasePart") and part.Transparency <= 0.1 then
+			hasVisiblePart = true
+			break
 		end
 	end
-	return true
+	return hasVisiblePart
 end
 
 local function getNextCoin(hrp)
@@ -54,34 +56,27 @@ local function moveContinuously(char)
 	local dirVel = Vector3.zero
 	local rotVel = Vector3.zero
 	local forward = hrp.CFrame.LookVector
-	local currentCoin = nil
 
-	while char.Parent do
+	while char:IsDescendantOf(workspace) do
 		local dt = RunService.Heartbeat:Wait()
+		local currentCoin = getNextCoin(hrp)
 
-		-- Refresh target if needed
-		if not currentCoin or not currentCoin:IsDescendantOf(workspace) or not isValidCoin(currentCoin) then
-			currentCoin = getNextCoin(hrp)
-		end
-
-		-- Only move if there is a valid coin
 		if currentCoin then
 			local targetPart = currentCoin:FindFirstChildWhichIsA("BasePart")
 			if targetPart then
 				local dist = (hrp.Position - targetPart.Position).Magnitude
-				local radius = targetPart.Size.Magnitude/2 + COIN_BUFFER
+				local radius = targetPart.Size.Magnitude / 2 + COIN_BUFFER
+
 				if dist <= radius then
-					-- Mark as collected
 					for _, part in ipairs(currentCoin:GetDescendants()) do
 						if part:IsA("BasePart") then
-							part.Transparency = 0.5
+							part.Transparency = 1
 							part.CanCollide = false
 						end
 					end
-					currentCoin = nil
 				end
 
-				-- Update direction
+				-- Move toward target
 				local desiredDir = (targetPart.Position - hrp.Position).Unit
 				local dVel = desiredDir - forward
 				local steerAccel = dVel * STEER_SPRING
@@ -101,7 +96,7 @@ local function moveContinuously(char)
 end
 
 -----------------------------------
--- NOCLIP AND GRAVITY
+-- NOCLIP & GRAVITY
 -----------------------------------
 local Noclip = nil
 local Clip = nil
@@ -128,10 +123,10 @@ end
 noclip()
 
 -----------------------------------
--- INIT + RESPAWN HANDLING
+-- CHARACTER INIT & RESPAWN HANDLER
 -----------------------------------
 local function onCharacterAdded(char)
-	local humanoid = char:FindFirstChildWhichIsA("Humanoid") or char:WaitForChild("Humanoid")
+	local humanoid = char:WaitForChild("Humanoid")
 	local hrp = char:WaitForChild("HumanoidRootPart")
 
 	workspace.Gravity = 0
