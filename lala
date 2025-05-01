@@ -1,9 +1,9 @@
 -----------------------------------
 -- CONFIGURATION
 -----------------------------------
-local MAX_SPEED     = 22.7
-local COIN_BUFFER   = 1
-local MAX_RANGE     = 500       -- Max distance to pursue coins
+local MAX_SPEED         = 22.7
+local COIN_BUFFER       = 1
+local MAX_COIN_DISTANCE = 150
 
 local STEER_SPRING  = 45
 local STEER_DAMP    = 1
@@ -20,42 +20,36 @@ local player     = Players.LocalPlayer
 -----------------------------------
 -- COIN VALIDATION
 -----------------------------------
-local function getVisualParts(coinPart)
-	local visuals = {}
-
-	-- Check direct children
-	for _, child in ipairs(coinPart:GetDescendants()) do
-		if child:IsA("BasePart") and child.Name ~= "Coin_Server" then
-			table.insert(visuals, child)
-		end
-	end
-
-	return visuals
-end
-
 local function isCoinValid(coinPart)
 	if not coinPart:IsA("BasePart") or coinPart.Name ~= "Coin_Server" then return false end
 
-	local visuals = getVisualParts(coinPart)
-	if #visuals == 0 then return false end
-
-	for _, visual in ipairs(visuals) do
-		if visual.Transparency > 0.1 then
-			return false
+	local function hasVisibleVisuals(container)
+		for _, part in ipairs(container:GetDescendants()) do
+			if part:IsA("BasePart") and part.Transparency <= 0.1 then
+				return true
+			end
 		end
+		return false
 	end
 
-	return true
+	-- Check all children and CoinVisual contents
+	if hasVisibleVisuals(coinPart) then
+		return true
+	end
+
+	return false
 end
 
 local function getClosestCoin(hrp)
 	local closest, shortestDist = nil, math.huge
 	for _, descendant in ipairs(workspace:GetDescendants()) do
 		if descendant:IsA("BasePart") and descendant.Name == "Coin_Server" then
-			local dist = (hrp.Position - descendant.Position).Magnitude
-			if dist < MAX_RANGE and isCoinValid(descendant) and dist < shortestDist then
-				shortestDist = dist
-				closest = descendant
+			if isCoinValid(descendant) then
+				local dist = (hrp.Position - descendant.Position).Magnitude
+				if dist < shortestDist and dist <= MAX_COIN_DISTANCE then
+					shortestDist = dist
+					closest = descendant
+				end
 			end
 		end
 	end
@@ -75,17 +69,22 @@ local function moveContinuously(char)
 	while char.Parent do
 		local dt = RunService.Heartbeat:Wait()
 
+		-- Refresh target
 		if not targetCoin or not targetCoin:IsDescendantOf(workspace) or not isCoinValid(targetCoin) then
 			targetCoin = getClosestCoin(hrp)
 		end
 
+		-- Move only if coin exists
 		if targetCoin then
 			local dist = (hrp.Position - targetCoin.Position).Magnitude
 			local radius = targetCoin.Size.Magnitude / 2 + COIN_BUFFER
 			if dist <= radius then
-				for _, visual in ipairs(getVisualParts(targetCoin)) do
-					visual.Transparency = 0.5
-					visual.CanCollide = false
+				-- Mark collected: fade all visible parts inside
+				for _, part in ipairs(targetCoin:GetDescendants()) do
+					if part:IsA("BasePart") then
+						part.Transparency = 0.5
+						part.CanCollide = false
+					end
 				end
 				targetCoin = nil
 			else
