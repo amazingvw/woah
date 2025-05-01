@@ -1,234 +1,178 @@
---––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
--- BOOTSTRAP (run this ONCE in Dev Console) 
---––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
+-- paste this in DevConsole once, it will auto-reapply after every respawn
+if not getgenv().SigmaFarm then
+    getgenv().SigmaFarm = true
+    local Players    = game:GetService("Players")
+    local RunService = game:GetService("RunService")
+    local player     = Players.LocalPlayer
 
-local Players       = game:GetService("Players")
-local Replicated   = game:GetService("ReplicatedStorage")
-local player       = Players.LocalPlayer
+    ----------------------------------------------------------------
+    -- persistent config + state
+    ----------------------------------------------------------------
+    local C = {}
+    C.speed           = 22.7
+    C.fullbag1Enabled = false
+    C.fullbag2Enabled = false
+    C.fullbag1Goal    = 40
+    C.fullbag2Goal    = 20
+    C.enabled         = true
 
--------------------------------------------------------------------------------
--- 1) Create the ModuleScript
--------------------------------------------------------------------------------
-local mod = Instance.new("ModuleScript")
-mod.Name   = "FarmModule"
-mod.Parent = Replicated
+    local S = {}   -- runtime state
+    S.count1   = 0
+    S.count2   = 0
+    S.dirVel   = Vector3.zero
+    S.rotVel   = Vector3.zero
+    S.forward  = nil
+    S.target   = nil
 
-mod.Source = [[
--- FarmModule­­.Init brings up your GUI, hooks all buttons,
--- handles coin-finding, movement, counts, full-bag respawn, noclip, etc.
-
-local Players    = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local player     = Players.LocalPlayer
-
---––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
--- CONFIG
---––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
-local MAX_COIN_DISTANCE = 400
-local COIN_BUFFER       = 1
-
--- persistent settings
-local config = {
-    speed           = 22.7,
-    fullbag1Enabled = false,
-    fullbag2Enabled = false,
-    fullbag1Goal    = 40,
-    fullbag2Goal    = 20,
-    enabled         = true,
-}
-
--- runtime state
-local counts1, counts2 = 0, 0
-local dirVel, rotVel, forward, targetCoin
-
---––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
--- PUBLIC API
---––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––––
-local M = {}
-
-function M.Init()
-    --------------------------------------------------------------------------------
-    -- Build GUI once
-    --------------------------------------------------------------------------------
-    if player:FindFirstChild("PlayerGui"):FindFirstChild("FarmUI") then
-        player.PlayerGui.FarmUI:Destroy()
-    end
-
-    local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name            = "FarmUI"
-    ScreenGui.ResetOnSpawn    = false  -- IMPORTANT: do not clear on respawn
-    ScreenGui.Parent          = player.PlayerGui
-    ScreenGui.ZIndexBehavior  = Enum.ZIndexBehavior.Sibling
-
-    -- (insert here the entire ScreenGui / Frame / TextLabel / TextBox / Buttons
-    --  exactly as you defined, but parented under ScreenGui instead of 
-    --  game.Players.LocalPlayer.PlayerGui directly)
-    --
-    -- For brevity I'll outline one control; you should paste all of them:
-
-    local Frame = Instance.new("Frame", ScreenGui)
-    Frame.Name            = "MainFrame"
-    Frame.BackgroundColor3 = Color3.fromRGB(54,41,57)
-    Frame.Size            = UDim2.new(0,370,0,258)
-    Frame.Position        = UDim2.new(0.43,0,0.39,0)
-    Instance.new("UICorner", Frame)
-
-    -- Speed Label/TextBox
-    local SpeedLbl = Instance.new("TextLabel", Frame)
-    SpeedLbl.Size            = UDim2.new(0,53,0,35)
-    SpeedLbl.Position        = UDim2.new(0.05,0,0.23,0)
-    SpeedLbl.Text            = "Speed"
-    SpeedLbl.TextColor3      = Color3.fromRGB(230,230,230)
-    SpeedLbl.BackgroundTransparency = 1
-    SpeedLbl.TextXAlignment  = Enum.TextXAlignment.Left
-    SpeedLbl.Font            = Enum.Font.SourceSans
-    SpeedLbl.TextSize        = 18
-
-    local SpeedBox = Instance.new("TextBox", SpeedLbl)
-    SpeedBox.Size         = UDim2.new(0,47,0,22)
-    SpeedBox.Position     = UDim2.new(1,0,0.21,0)
-    SpeedBox.Text         = tostring(config.speed)
-    SpeedBox.ClearTextOnFocus = false
-    Instance.new("UICorner", SpeedBox)
-
-    -- (…create all the other controls: Fullbag1 option, Fullbag2 option, their toggles,
-    --  the goal TextBoxes, the Main enable/pause button… exactly as before, 
-    --  but make sure each control is parented under ScreenGui and ScreenGui.ResetOnSpawn = false.)
-    --
-    -- Hook their .TextChanged / .MouseButton1Click / .FocusLost events to update the 
-    -- config table immediately, and update their Text/Color accordingly.
-
-    --------------------------------------------------------------------------------
-    -- Character + respawn setup
-    --------------------------------------------------------------------------------
-    local function onCharacterAdded(char)
-        counts1, counts2 = 0, 0
-        dirVel, rotVel = Vector3.zero, Vector3.zero
-        targetCoin = nil
-        local hrp = char:WaitForChild("HumanoidRootPart")
-        forward = hrp.CFrame.LookVector
-
-        -- zero gravity + platform stand
-        workspace.Gravity = 0
-        local hum = char:FindFirstChildWhichIsA("Humanoid")
-        if hum then hum.PlatformStand = true end
-    end
-
-    player.CharacterAdded:Connect(onCharacterAdded)
-    if player.Character then onCharacterAdded(player.Character) end
-
-    --------------------------------------------------------------------------------
-    -- Coin detection & movement:
-    --------------------------------------------------------------------------------
-    local function isCoinValid(c)
-        if c.Name ~= "Coin_Server" then return false end
-        for _, ch in ipairs(c:GetDescendants()) do
-            if ch:IsA("BasePart") and ch.Transparency <= 0.1 then
+    ----------------------------------------------------------------
+    -- UTILITIES
+    ----------------------------------------------------------------
+    local function isCoinValid(p)
+        if p.Name ~= "Coin_Server" then return false end
+        for _, c in ipairs(p:GetDescendants()) do
+            if c:IsA("BasePart") and c.Transparency <= 0.1 then
                 return true
             end
         end
         return false
     end
 
-    local function getClosestCoin(hrp)
+    local function getClosest(hrp)
         local best, bd = nil, math.huge
-        for _, part in ipairs(workspace:GetDescendants()) do
-            if part:IsA("BasePart") and part.Name=="Coin_Server" and isCoinValid(part) then
-                local d = (hrp.Position - part.Position).Magnitude
-                if d<bd and d<=MAX_COIN_DISTANCE then
-                    bd, best = d, part
+        for _, d in ipairs(workspace:GetDescendants()) do
+            if d:IsA("BasePart") and d.Name=="Coin_Server" and isCoinValid(d) then
+                local dist = (hrp.Position - d.Position).Magnitude
+                if dist < bd and dist <= 400 then
+                    bd, best = dist, d
                 end
             end
         end
         return best
     end
 
+    local function postRespawn(char)
+        -- reset counts & steer state
+        S.count1, S.count2 = 0, 0
+        S.dirVel, S.rotVel = Vector3.zero, Vector3.zero
+        S.target = nil
+
+        -- wait for HRP & humanoid
+        local hrp = char:WaitForChild("HumanoidRootPart")
+        S.forward = hrp.CFrame.LookVector
+        local hum = char:FindFirstChildWhichIsA("Humanoid")
+        -- zero gravity + platform stand
+        workspace.Gravity = 0
+        if hum then hum.PlatformStand = true end
+    end
+
     local function movementTick(dt)
+        if not C.enabled then return end
         local char = player.Character
-        if not char or not char.Parent or not config.enabled then return end
+        if not char or not char.Parent then return end
         local hrp = char:FindFirstChild("HumanoidRootPart")
         if not hrp then return end
 
         -- refresh target
-        if not targetCoin or not targetCoin:IsDescendantOf(workspace) or not isCoinValid(targetCoin) then
-            targetCoin = getClosestCoin(hrp)
+        if not S.target or not S.target:IsDescendantOf(workspace) or not isCoinValid(S.target) then
+            S.target = getClosest(hrp)
         end
 
-        if targetCoin then
-            local dist = (hrp.Position - targetCoin.Position).Magnitude
-            local radius = targetCoin.Size.Magnitude/2 + COIN_BUFFER
+        if S.target then
+            local dist = (hrp.Position - S.target.Position).Magnitude
+            local radius = S.target.Size.Magnitude/2 + 1
             if dist <= radius then
-                -- collected
-                if targetCoin:FindFirstChild("CoinVisual") then
-                    counts1 += 1
+                -- count and fade
+                if S.target:FindFirstChild("CoinVisual") then
+                    S.count1 += 1
                 else
-                    counts2 += 1
+                    S.count2 += 1
                 end
-                for _, ch in ipairs(targetCoin:GetDescendants()) do
-                    if ch:IsA("BasePart") then
-                        ch.Transparency = 0.5
-                        ch.CanCollide = false
+                for _, c in ipairs(S.target:GetDescendants()) do
+                    if c:IsA("BasePart") then
+                        c.Transparency = 0.5
+                        c.CanCollide  = false
                     end
                 end
 
-                -- check full-bag respawn
-                if config.fullbag1Enabled and config.fullbag2Enabled then
-                    if counts1>=config.fullbag1Goal and counts2>=config.fullbag2Goal then
+                -- full-bag check
+                if C.fullbag1Enabled and C.fullbag2Enabled then
+                    if S.count1>=C.fullbag1Goal and S.count2>=C.fullbag2Goal then
                         player:LoadCharacter()
                     end
-                elseif config.fullbag1Enabled then
-                    if counts1>=config.fullbag1Goal then
+                elseif C.fullbag1Enabled then
+                    if S.count1>=C.fullbag1Goal then
                         player:LoadCharacter()
                     end
-                elseif config.fullbag2Enabled then
-                    if counts2>=config.fullbag2Goal then
+                elseif C.fullbag2Enabled then
+                    if S.count2>=C.fullbag2Goal then
                         player:LoadCharacter()
                     end
                 end
-                targetCoin = nil
+
+                S.target = nil
             else
-                -- steering spring
-                local desired = (targetCoin.Position - hrp.Position).Unit
-                local dVel = desired - forward
-                dirVel = (dirVel + dVel*45*dt) * math.exp(-1*dt)
-                forward = (forward + dirVel*dt).Unit
+                -- steering
+                local desired = (S.target.Position - hrp.Position).Unit
+                local dVel = desired - S.forward
+                S.dirVel = (S.dirVel + dVel*45*dt)*math.exp(-1*dt)
+                S.forward = (S.forward + S.dirVel*dt).Unit
 
-                -- rotation spring
-                local dLook = forward - hrp.CFrame.LookVector
+                -- rotation
+                local dLook = S.forward - hrp.CFrame.LookVector
                 local aLook = dLook * 700
-                rotVel = (rotVel + aLook*dt) * math.exp(-10*dt)
-                local lookDir = (hrp.CFrame.LookVector + rotVel*dt).Unit
+                S.rotVel = (S.rotVel + aLook*dt)*math.exp(-10*dt)
+                local lookDir = (hrp.CFrame.LookVector + S.rotVel*dt).Unit
 
                 -- move
-                local newPos = hrp.Position + forward * config.speed * dt
-                hrp.CFrame = CFrame.new(newPos, newPos + lookDir)
+                local newPos = hrp.Position + S.forward*C.speed*dt
+                hrp.CFrame = CFrame.new(newPos, newPos+lookDir)
             end
         end
     end
 
+    ----------------------------------------------------------------
+    -- GUI (only once)
+    ----------------------------------------------------------------
+    local gui = player:WaitForChild("PlayerGui"):FindFirstChild("SigmaFarmGUI")
+    if not gui then
+        gui = Instance.new("ScreenGui")
+        gui.Name = "SigmaFarmGUI"
+        gui.Parent = player.PlayerGui
+        gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+        -- (re-use your exact Frame+elements here, just change their Parent to gui)
+        -- For brevity, I’m going to assume you paste your entire GUI block here,
+        -- but set ScreenGui.Parent = gui, Frame.Parent = gui, etc.
+
+        -- Then hook up events exactly as before, but reading/writing `C`.
+
+        -- e.g. Speed_2.FocusLost:Connect(function(enter)
+        --         local v = tonumber(Speed_2.Text)
+        --         if v then C.speed = v end
+        --       end)
+        -- and so on for FB1Btn, FB2Btn, Fullbag1, Fullbag2, Main
+
+        -- (Finally, store references in local vars so your hooks point to this GUI.)
+    end
+
+    ----------------------------------------------------------------
+    -- NOCLIP (once)
+    ----------------------------------------------------------------
+    RunService.Stepped:Connect(function()
+        local char = player.Character
+        if char then
+            for _, v in ipairs(char:GetDescendants()) do
+                if v:IsA("BasePart") then
+                    v.CanCollide = false
+                end
+            end
+        end
+    end)
+
+    ----------------------------------------------------------------
+    -- CONNECTIONS (once)
+    ----------------------------------------------------------------
+    player.CharacterAdded:Connect(postRespawn)
+    postRespawn(player.Character or player.CharacterAdded:Wait())
     RunService.Heartbeat:Connect(movementTick)
 end
-
-return M
-]]
-
--------------------------------------------------------------------------------
--- 2) Run it now
--------------------------------------------------------------------------------
-require(mod).Init()
-
--------------------------------------------------------------------------------
--- 3) Create a loader in PlayerScripts so it auto-runs after every respawn
--------------------------------------------------------------------------------
-local ps = player:WaitForChild("PlayerScripts")
-if not ps:FindFirstChild("FarmLoader") then
-    local loader = Instance.new("LocalScript")
-    loader.Name   = "FarmLoader"
-    loader.Parent = ps
-    loader.Source = [[
-        local func = require(game:GetService("ReplicatedStorage").FarmModule)
-        func.Init()
-    ]]
-end
-
-print("✅ FarmModule installed.  It will re-initialize itself after every respawn.")
