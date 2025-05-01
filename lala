@@ -4,7 +4,7 @@
 local MAX_SPEED         = 22.7
 local COIN_BUFFER       = 1
 local COIN_ACQUIRE_DELAY = 1       -- delay before trying next coin
-local MAX_COIN_RANGE     = 150     -- max range to go for coins
+local MAX_COIN_RANGE     = 300     -- max range to go for coins
 
 local STEER_SPRING  = 45
 local STEER_DAMP    = 1
