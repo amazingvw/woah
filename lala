@@ -1,178 +1,398 @@
--- paste this in DevConsole once, it will auto-reapply after every respawn
-if not getgenv().SigmaFarm then
-    getgenv().SigmaFarm = true
-    local Players    = game:GetService("Players")
-    local RunService = game:GetService("RunService")
-    local player     = Players.LocalPlayer
+-- Run this _once_ in your DevConsole:
+local player = game.Players.LocalPlayer
 
-    ----------------------------------------------------------------
-    -- persistent config + state
-    ----------------------------------------------------------------
-    local C = {}
-    C.speed           = 22.7
-    C.fullbag1Enabled = false
-    C.fullbag2Enabled = false
-    C.fullbag1Goal    = 40
-    C.fullbag2Goal    = 20
-    C.enabled         = true
+-- 1) Grab your entire existing script (the one that builds the GUI,
+--    handles respawns, noclip, zero-gravity, movement, etc.) and paste
+--    it in this big multiline string.  Nothing special, just plain Lua.
+local sourceCode = --!strict
+-- Single LocalScript to run via DevConsole
 
-    local S = {}   -- runtime state
-    S.count1   = 0
-    S.count2   = 0
-    S.dirVel   = Vector3.zero
-    S.rotVel   = Vector3.zero
-    S.forward  = nil
-    S.target   = nil
+--// SERVICES
+local Players    = game:GetService("Players")
+local RunService = game:GetService("RunService")
 
-    ----------------------------------------------------------------
-    -- UTILITIES
-    ----------------------------------------------------------------
-    local function isCoinValid(p)
-        if p.Name ~= "Coin_Server" then return false end
-        for _, c in ipairs(p:GetDescendants()) do
-            if c:IsA("BasePart") and c.Transparency <= 0.1 then
-                return true
-            end
-        end
-        return false
+local player = Players.LocalPlayer
+
+--// CONFIG
+local MAX_COIN_DISTANCE = 150   -- studs
+local COIN_BUFFER       = 1
+
+-- persistent settings (in memory)
+local config = {
+    speed           = 22.7,
+    fullbag1Enabled = false,
+    fullbag2Enabled = false,
+    fullbag1Goal    = 40,
+    fullbag2Goal    = 20,
+    enabled         = true,
+}
+
+-- runtime state
+local counts1, counts2 = 0, 0
+local dirVel, rotVel, forward, targetCoin = Vector3.zero, Vector3.zero, nil, nil
+local heartbeatConn
+
+--// GUI CREATION
+local ScreenGui = Instance.new("ScreenGui")
+local Frame     = Instance.new("Frame")
+local TitleGUI  = Instance.new("TextLabel")
+local UICorner  = Instance.new("UICorner")
+local Speed     = Instance.new("TextLabel")
+local Speed_2   = Instance.new("TextBox")
+local UICorner2 = Instance.new("UICorner")
+local Fullbag1opt = Instance.new("TextLabel")
+local FB1Btn      = Instance.new("TextButton")
+local UIC3        = Instance.new("UICorner")
+local Fullbag2opt = Instance.new("TextLabel")
+local FB2Btn      = Instance.new("TextButton")
+local UIC4        = Instance.new("UICorner")
+local Fullbag1int = Instance.new("TextLabel")
+local Fullbag1    = Instance.new("TextBox")
+local UIC5        = Instance.new("UICorner")
+local Fullbag2int = Instance.new("TextLabel")
+local Fullbag2    = Instance.new("TextBox")
+local UIC6        = Instance.new("UICorner")
+local Main        = Instance.new("TextButton")
+local UIC7        = Instance.new("UICorner")
+
+-- parent
+ScreenGui.Parent = player:WaitForChild("PlayerGui")
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+Frame.Parent = ScreenGui
+Frame.BackgroundColor3 = Color3.fromRGB(54, 41, 57)
+Frame.BorderSizePixel = 0
+Frame.Position = UDim2.new(0.4305,0,0.3941,0)
+Frame.Size     = UDim2.new(0,370,0,258)
+
+TitleGUI.Name               = "TitleGUI"
+TitleGUI.Parent             = Frame
+TitleGUI.BackgroundTransparency = 1
+TitleGUI.Position           = UDim2.new(0,0,0.04878,0)
+TitleGUI.Size               = UDim2.new(0,370,0,40)
+TitleGUI.Font               = Enum.Font.Unknown
+TitleGUI.Text               = "SIgmasSkibidi mm2 universal farm"
+TitleGUI.TextColor3         = Color3.new(1,1,1)
+TitleGUI.TextSize           = 22
+TitleGUI.TextWrapped        = true
+
+UICorner.Parent = Frame
+
+-- Speed
+Speed.Name               = "Speed"
+Speed.Parent             = Frame
+Speed.BackgroundTransparency = 1
+Speed.Position           = UDim2.new(0.05135,0,0.22766,0)
+Speed.Size               = UDim2.new(0,53,0,35)
+Speed.Font               = Enum.Font.Unknown
+Speed.Text               = "Speed"
+Speed.TextColor3         = Color3.fromRGB(230,230,230)
+Speed.TextSize           = 18
+Speed.TextWrapped        = true
+Speed.TextXAlignment     = Enum.TextXAlignment.Left
+
+Speed_2.Name               = "Speed"
+Speed_2.Parent             = Speed
+Speed_2.BackgroundColor3   = Color3.fromRGB(30,23,39)
+Speed_2.BorderSizePixel    = 0
+Speed_2.Position           = UDim2.new(1,0,0.209,0)
+Speed_2.Size               = UDim2.new(0,47,0,22)
+Speed_2.Font               = Enum.Font.Unknown
+Speed_2.Text               = tostring(config.speed)
+Speed_2.TextColor3         = Color3.new(1,1,1)
+Speed_2.TextSize           = 16
+
+UICorner2.Parent = Speed_2
+
+-- Fullbag1 toggle
+Fullbag1opt.Name               = "Fullbag1 option"
+Fullbag1opt.Parent             = Frame
+Fullbag1opt.BackgroundTransparency = 1
+Fullbag1opt.Position           = UDim2.new(0.05135,0,0.35963,0)
+Fullbag1opt.Size               = UDim2.new(0,172,0,35)
+Fullbag1opt.Font               = Enum.Font.Unknown
+Fullbag1opt.Text               = "CoinVisual fullbag reset"
+Fullbag1opt.TextColor3         = Color3.fromRGB(230,230,230)
+Fullbag1opt.TextSize           = 18
+Fullbag1opt.TextWrapped        = true
+Fullbag1opt.TextXAlignment     = Enum.TextXAlignment.Left
+
+FB1Btn.Parent             = Fullbag1opt
+FB1Btn.BackgroundColor3   = Color3.fromRGB(147,74,74)
+FB1Btn.Size               = UDim2.new(0,57,0,27)
+FB1Btn.Position           = UDim2.new(1,0,0.114,0)
+FB1Btn.Font               = Enum.Font.Unknown
+FB1Btn.Text               = "No"
+FB1Btn.TextColor3         = Color3.new(1,1,1)
+FB1Btn.TextSize           = 18
+
+UIC3.Parent = FB1Btn
+
+-- Fullbag2 toggle
+Fullbag2opt.Name               = "Fullbag2 option"
+Fullbag2opt.Parent             = Frame
+Fullbag2opt.BackgroundTransparency = 1
+Fullbag2opt.Position           = UDim2.new(0.05135,0,0.4916,0)
+Fullbag2opt.Size               = UDim2.new(0,166,0,35)
+Fullbag2opt.Font               = Enum.Font.Unknown
+Fullbag2opt.Text               = "MeshPart fullbag reset"
+Fullbag2opt.TextColor3         = Color3.fromRGB(230,230,230)
+Fullbag2opt.TextSize           = 18
+Fullbag2opt.TextWrapped        = true
+Fullbag2opt.TextXAlignment     = Enum.TextXAlignment.Left
+
+FB2Btn.Parent             = Fullbag2opt
+FB2Btn.BackgroundColor3   = Color3.fromRGB(147,74,74)
+FB2Btn.Size               = UDim2.new(0,57,0,27)
+FB2Btn.Position           = UDim2.new(1,0,0.114,0)
+FB2Btn.Font               = Enum.Font.Unknown
+FB2Btn.Text               = "No"
+FB2Btn.TextColor3         = Color3.new(1,1,1)
+FB2Btn.TextSize           = 18
+
+UIC4.Parent = FB2Btn
+
+-- Fullbag1 goal
+Fullbag1int.Name               = "Fullbag1 int"
+Fullbag1int.Parent             = Frame
+Fullbag1int.BackgroundTransparency = 1
+Fullbag1int.Position           = UDim2.new(0.05135,0,0.62707,0)
+Fullbag1int.Size               = UDim2.new(0,172,0,35)
+Fullbag1int.Font               = Enum.Font.Unknown
+Fullbag1int.Text               = "CoinVisual fullbag value"
+Fullbag1int.TextColor3         = Color3.fromRGB(230,230,230)
+Fullbag1int.TextSize           = 18
+Fullbag1int.TextWrapped        = true
+Fullbag1int.TextXAlignment     = Enum.TextXAlignment.Left
+
+Fullbag1.Name               = "Fullbag1"
+Fullbag1.Parent             = Fullbag1int
+Fullbag1.BackgroundColor3   = Color3.fromRGB(30,23,39)
+Fullbag1.BorderSizePixel    = 0
+Fullbag1.Position           = UDim2.new(1,0,0.209,0)
+Fullbag1.Size               = UDim2.new(0,47,0,22)
+Fullbag1.Font               = Enum.Font.Unknown
+Fullbag1.Text               = tostring(config.fullbag1Goal)
+Fullbag1.TextColor3         = Color3.new(1,1,1)
+Fullbag1.TextSize           = 16
+
+UIC5.Parent = Fullbag1
+
+-- Fullbag2 goal
+Fullbag2int.Name               = "Fullbag2 int"
+Fullbag2int.Parent             = Frame
+Fullbag2int.BackgroundTransparency = 1
+Fullbag2int.Position           = UDim2.new(0.05135,0,0.75905,0)
+Fullbag2int.Size               = UDim2.new(0,166,0,35)
+Fullbag2int.Font               = Enum.Font.Unknown
+Fullbag2int.Text               = "MeshPart fullbag value"
+Fullbag2int.TextColor3         = Color3.fromRGB(230,230,230)
+Fullbag2int.TextSize           = 18
+Fullbag2int.TextWrapped        = true
+Fullbag2int.TextXAlignment     = Enum.TextXAlignment.Left
+
+Fullbag2.Name               = "Fullbag2"
+Fullbag2.Parent             = Fullbag2int
+Fullbag2.BackgroundColor3   = Color3.fromRGB(30,23,39)
+Fullbag2.BorderSizePixel    = 0
+Fullbag2.Position           = UDim2.new(1,0,0.209,0)
+Fullbag2.Size               = UDim2.new(0,47,0,22)
+Fullbag2.Font               = Enum.Font.Unknown
+Fullbag2.Text               = tostring(config.fullbag2Goal)
+Fullbag2.TextColor3         = Color3.new(1,1,1)
+Fullbag2.TextSize           = 16
+
+UIC6.Parent = Fullbag2
+
+-- Main enable/pause
+Main.Name               = "Main"
+Main.Parent             = Frame
+Main.BackgroundColor3   = Color3.fromRGB(85,147,74)
+Main.BorderSizePixel    = 0
+Main.Position           = UDim2.new(0.76486,0,0.84941,0)
+Main.Size               = UDim2.new(0,79,0,32)
+Main.Font               = Enum.Font.Unknown
+Main.Text               = "Enabled"
+Main.TextColor3         = Color3.fromRGB(0,0,0)
+Main.TextSize           = 14
+
+UIC7.CornerRadius = UDim.new(0,5)
+UIC7.Parent       = Main
+
+--// GUI LOGIC
+Speed_2.FocusLost:Connect(function(enter)
+    if enter then
+        local v = tonumber(Speed_2.Text)
+        if v then config.speed = v end
     end
+end)
 
-    local function getClosest(hrp)
-        local best, bd = nil, math.huge
-        for _, d in ipairs(workspace:GetDescendants()) do
-            if d:IsA("BasePart") and d.Name=="Coin_Server" and isCoinValid(d) then
+FB1Btn.MouseButton1Click:Connect(function()
+    config.fullbag1Enabled = not config.fullbag1Enabled
+    if config.fullbag1Enabled then
+        FB1Btn.Text = "Yes"
+        FB1Btn.BackgroundColor3 = Color3.fromRGB(85,147,74)
+    else
+        FB1Btn.Text = "No"
+        FB1Btn.BackgroundColor3 = Color3.fromRGB(147,74,74)
+    end
+end)
+
+FB2Btn.MouseButton1Click:Connect(function()
+    config.fullbag2Enabled = not config.fullbag2Enabled
+    if config.fullbag2Enabled then
+        FB2Btn.Text = "Yes"
+        FB2Btn.BackgroundColor3 = Color3.fromRGB(85,147,74)
+    else
+        FB2Btn.Text = "No"
+        FB2Btn.BackgroundColor3 = Color3.fromRGB(147,74,74)
+    end
+end)
+
+Fullbag1.FocusLost:Connect(function(enter)
+    if enter then
+        local v = tonumber(Fullbag1.Text)
+        if v then config.fullbag1Goal = v end
+    end
+end)
+
+Fullbag2.FocusLost:Connect(function(enter)
+    if enter then
+        local v = tonumber(Fullbag2.Text)
+        if v then config.fullbag2Goal = v end
+    end
+end)
+
+Main.MouseButton1Click:Connect(function()
+    config.enabled = not config.enabled
+    if config.enabled then
+        Main.Text = "Enabled"
+        Main.BackgroundColor3 = Color3.fromRGB(85,147,74)
+    else
+        Main.Text = "Paused"
+        Main.BackgroundColor3 = Color3.fromRGB(147,74,74)
+    end
+end)
+
+--// RESPOND TO RESPAWN
+local function onCharacterAdded(char: Model)
+    counts1, counts2 = 0, 0
+    dirVel, rotVel = Vector3.zero, Vector3.zero
+    targetCoin = nil
+    local hrp = char:WaitForChild("HumanoidRootPart")
+    forward = hrp.CFrame.LookVector
+
+    -- zero gravity & noclip & platform stand
+    workspace.Gravity = 0
+    local hum = char:FindFirstChildWhichIsA("Humanoid")
+    if hum then hum.PlatformStand = true end
+end
+
+player.CharacterAdded:Connect(onCharacterAdded)
+if player.Character then onCharacterAdded(player.Character) end
+
+--// COIN DETECTION
+local function isCoinValid(coinPart: BasePart)
+    if coinPart.Name ~= "Coin_Server" then return false end
+    -- look for ANY visible child inside coinPart (including inside a CoinVisual)
+    for _, c in ipairs(coinPart:GetDescendants()) do
+        if c:IsA("BasePart") and c.Transparency <= 0.1 then
+            return true
+        end
+    end
+    return false
+end
+
+local function getClosestCoin(hrp: BasePart)
+    local best, bd = nil, math.huge
+    for _, d in ipairs(workspace:GetDescendants()) do
+        if d:IsA("BasePart") and d.Name == "Coin_Server" then
+            if isCoinValid(d) then
                 local dist = (hrp.Position - d.Position).Magnitude
-                if dist < bd and dist <= 400 then
+                if dist < bd and dist <= MAX_COIN_DISTANCE then
                     bd, best = dist, d
                 end
             end
         end
-        return best
     end
-
-    local function postRespawn(char)
-        -- reset counts & steer state
-        S.count1, S.count2 = 0, 0
-        S.dirVel, S.rotVel = Vector3.zero, Vector3.zero
-        S.target = nil
-
-        -- wait for HRP & humanoid
-        local hrp = char:WaitForChild("HumanoidRootPart")
-        S.forward = hrp.CFrame.LookVector
-        local hum = char:FindFirstChildWhichIsA("Humanoid")
-        -- zero gravity + platform stand
-        workspace.Gravity = 0
-        if hum then hum.PlatformStand = true end
-    end
-
-    local function movementTick(dt)
-        if not C.enabled then return end
-        local char = player.Character
-        if not char or not char.Parent then return end
-        local hrp = char:FindFirstChild("HumanoidRootPart")
-        if not hrp then return end
-
-        -- refresh target
-        if not S.target or not S.target:IsDescendantOf(workspace) or not isCoinValid(S.target) then
-            S.target = getClosest(hrp)
-        end
-
-        if S.target then
-            local dist = (hrp.Position - S.target.Position).Magnitude
-            local radius = S.target.Size.Magnitude/2 + 1
-            if dist <= radius then
-                -- count and fade
-                if S.target:FindFirstChild("CoinVisual") then
-                    S.count1 += 1
-                else
-                    S.count2 += 1
-                end
-                for _, c in ipairs(S.target:GetDescendants()) do
-                    if c:IsA("BasePart") then
-                        c.Transparency = 0.5
-                        c.CanCollide  = false
-                    end
-                end
-
-                -- full-bag check
-                if C.fullbag1Enabled and C.fullbag2Enabled then
-                    if S.count1>=C.fullbag1Goal and S.count2>=C.fullbag2Goal then
-                        player:LoadCharacter()
-                    end
-                elseif C.fullbag1Enabled then
-                    if S.count1>=C.fullbag1Goal then
-                        player:LoadCharacter()
-                    end
-                elseif C.fullbag2Enabled then
-                    if S.count2>=C.fullbag2Goal then
-                        player:LoadCharacter()
-                    end
-                end
-
-                S.target = nil
-            else
-                -- steering
-                local desired = (S.target.Position - hrp.Position).Unit
-                local dVel = desired - S.forward
-                S.dirVel = (S.dirVel + dVel*45*dt)*math.exp(-1*dt)
-                S.forward = (S.forward + S.dirVel*dt).Unit
-
-                -- rotation
-                local dLook = S.forward - hrp.CFrame.LookVector
-                local aLook = dLook * 700
-                S.rotVel = (S.rotVel + aLook*dt)*math.exp(-10*dt)
-                local lookDir = (hrp.CFrame.LookVector + S.rotVel*dt).Unit
-
-                -- move
-                local newPos = hrp.Position + S.forward*C.speed*dt
-                hrp.CFrame = CFrame.new(newPos, newPos+lookDir)
-            end
-        end
-    end
-
-    ----------------------------------------------------------------
-    -- GUI (only once)
-    ----------------------------------------------------------------
-    local gui = player:WaitForChild("PlayerGui"):FindFirstChild("SigmaFarmGUI")
-    if not gui then
-        gui = Instance.new("ScreenGui")
-        gui.Name = "SigmaFarmGUI"
-        gui.Parent = player.PlayerGui
-        gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-
-        -- (re-use your exact Frame+elements here, just change their Parent to gui)
-        -- For brevity, I’m going to assume you paste your entire GUI block here,
-        -- but set ScreenGui.Parent = gui, Frame.Parent = gui, etc.
-
-        -- Then hook up events exactly as before, but reading/writing `C`.
-
-        -- e.g. Speed_2.FocusLost:Connect(function(enter)
-        --         local v = tonumber(Speed_2.Text)
-        --         if v then C.speed = v end
-        --       end)
-        -- and so on for FB1Btn, FB2Btn, Fullbag1, Fullbag2, Main
-
-        -- (Finally, store references in local vars so your hooks point to this GUI.)
-    end
-
-    ----------------------------------------------------------------
-    -- NOCLIP (once)
-    ----------------------------------------------------------------
-    RunService.Stepped:Connect(function()
-        local char = player.Character
-        if char then
-            for _, v in ipairs(char:GetDescendants()) do
-                if v:IsA("BasePart") then
-                    v.CanCollide = false
-                end
-            end
-        end
-    end)
-
-    ----------------------------------------------------------------
-    -- CONNECTIONS (once)
-    ----------------------------------------------------------------
-    player.CharacterAdded:Connect(postRespawn)
-    postRespawn(player.Character or player.CharacterAdded:Wait())
-    RunService.Heartbeat:Connect(movementTick)
+    return best
 end
+
+--// MOVEMENT & COLLECTION
+local function movementTick(dt: number, hrp: BasePart)
+    -- refresh target if invalid
+    if not targetCoin or not targetCoin:IsDescendantOf(workspace) or not isCoinValid(targetCoin) then
+        targetCoin = getClosestCoin(hrp)
+    end
+
+    if targetCoin and config.enabled then
+        -- collect?
+        local dist = (hrp.Position - targetCoin.Position).Magnitude
+        local radius = targetCoin.Size.Magnitude/2 + COIN_BUFFER
+        if dist <= radius then
+            -- classify & count
+            if targetCoin:FindFirstChild("CoinVisual") then
+                counts1 += 1
+            else
+                counts2 += 1
+            end
+            -- fade all children
+            for _, c in ipairs(targetCoin:GetDescendants()) do
+                if c:IsA("BasePart") then
+                    c.Transparency = 0.5
+                    c.CanCollide = false
+                end
+            end
+            -- check for full-bag reset
+            if config.fullbag1Enabled and config.fullbag2Enabled then
+                if counts1 >= config.fullbag1Goal and counts2 >= config.fullbag2Goal then
+                    player:LoadCharacter()
+                end
+            elseif config.fullbag1Enabled then
+                if counts1 >= config.fullbag1Goal then
+                    player:LoadCharacter()
+                end
+            elseif config.fullbag2Enabled then
+                if counts2 >= config.fullbag2Goal then
+                    player:LoadCharacter()
+                end
+            end
+            targetCoin = nil
+        else
+            -- steering spring
+            local desired = (targetCoin.Position - hrp.Position).Unit
+            local dVel = desired - forward
+            dirVel = (dirVel + dVel * 45 * dt) * math.exp(-1 * dt)
+            forward = (forward + dirVel * dt).Unit
+
+            -- rotation spring
+            local dLook = forward - hrp.CFrame.LookVector
+            local aLook = dLook * 700
+            rotVel = (rotVel + aLook * dt) * math.exp(-10 * dt)
+            local lookDir = (hrp.CFrame.LookVector + rotVel * dt).Unit
+
+            -- move
+            local newPos = hrp.Position + forward * config.speed * dt
+            hrp.CFrame = CFrame.new(newPos, newPos + lookDir)
+        end
+    end
+end
+
+-- heartbeat loop
+heartbeatConn = RunService.Heartbeat:Connect(function(dt)
+    local char = player.Character
+    if char and char.Parent and config.enabled then
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            movementTick(dt, hrp)
+        end
+    end
+end)
+
+-- 2) Create a new LocalScript under PlayerScripts
+local ls = Instance.new("LocalScript")
+ls.Name   = "SigmaFarmScript"
+ls.Source = sourceCode
+ls.Parent = player:WaitForChild("PlayerScripts")
+
+print("✅ Farm script injected into PlayerScripts.  It will now auto-run on every respawn.")
