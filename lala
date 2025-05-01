@@ -14,38 +14,35 @@ local ROT_DAMP      = 10
 -----------------------------------
 local Players    = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local player = Players.LocalPlayer
+local player     = Players.LocalPlayer
 
 -----------------------------------
--- UTILITIES
+-- COIN DETECTION + VALIDATION
 -----------------------------------
-local function isValidCoin(model)
-	if not model:IsA("Model") or model.Name ~= "Coin_Server" then return false end
-
-	local hasVisiblePart = false
-	for _, part in ipairs(model:GetDescendants()) do
-		if part:IsA("BasePart") and part.Transparency <= 0.1 then
-			hasVisiblePart = true
-			break
+local function isCoinValid(coinPart)
+	if not coinPart:IsA("BasePart") or coinPart.Name ~= "Coin_Server" then return false end
+	for _, child in ipairs(coinPart:GetChildren()) do
+		if child:IsA("BasePart") and child.Transparency > 0.1 then
+			return false -- Collected
 		end
 	end
-	return hasVisiblePart
+	return true
 end
 
-local function getNextCoin(hrp)
-	local best, bd = nil, math.huge
-	for _, v in ipairs(workspace:GetDescendants()) do
-		if v:IsA("Model") and v.Name == "Coin_Server" and isValidCoin(v) then
-			local p = v:FindFirstChildWhichIsA("BasePart")
-			if p then
-				local d = (hrp.Position - p.Position).Magnitude
-				if d < bd then
-					bd, best = d, v
+local function getClosestCoin(hrp)
+	local closest, shortestDist = nil, math.huge
+	for _, descendant in ipairs(workspace:GetDescendants()) do
+		if descendant:IsA("BasePart") and descendant.Name == "Coin_Server" then
+			if isCoinValid(descendant) then
+				local dist = (hrp.Position - descendant.Position).Magnitude
+				if dist < shortestDist then
+					shortestDist = dist
+					closest = descendant
 				end
 			end
 		end
 	end
-	return best
+	return closest
 end
 
 -----------------------------------
@@ -56,28 +53,31 @@ local function moveContinuously(char)
 	local dirVel = Vector3.zero
 	local rotVel = Vector3.zero
 	local forward = hrp.CFrame.LookVector
+	local targetCoin = nil
 
-	while char:IsDescendantOf(workspace) do
+	while char.Parent do
 		local dt = RunService.Heartbeat:Wait()
-		local currentCoin = getNextCoin(hrp)
 
-		if currentCoin then
-			local targetPart = currentCoin:FindFirstChildWhichIsA("BasePart")
-			if targetPart then
-				local dist = (hrp.Position - targetPart.Position).Magnitude
-				local radius = targetPart.Size.Magnitude / 2 + COIN_BUFFER
+		-- Refresh target
+		if not targetCoin or not targetCoin:IsDescendantOf(workspace) or not isCoinValid(targetCoin) then
+			targetCoin = getClosestCoin(hrp)
+		end
 
-				if dist <= radius then
-					for _, part in ipairs(currentCoin:GetDescendants()) do
-						if part:IsA("BasePart") then
-							part.Transparency = 1
-							part.CanCollide = false
-						end
+		-- Move only if coin exists
+		if targetCoin then
+			local dist = (hrp.Position - targetCoin.Position).Magnitude
+			local radius = targetCoin.Size.Magnitude / 2 + COIN_BUFFER
+			if dist <= radius then
+				-- Mark collected: fade children
+				for _, child in ipairs(targetCoin:GetChildren()) do
+					if child:IsA("BasePart") then
+						child.Transparency = 0.5
+						child.CanCollide = false
 					end
 				end
-
-				-- Move toward target
-				local desiredDir = (targetPart.Position - hrp.Position).Unit
+				targetCoin = nil
+			else
+				local desiredDir = (targetCoin.Position - hrp.Position).Unit
 				local dVel = desiredDir - forward
 				local steerAccel = dVel * STEER_SPRING
 				dirVel = (dirVel + steerAccel * dt) * math.exp(-STEER_DAMP * dt)
@@ -123,7 +123,7 @@ end
 noclip()
 
 -----------------------------------
--- CHARACTER INIT & RESPAWN HANDLER
+-- CHARACTER INIT + RESPAWN HOOK
 -----------------------------------
 local function onCharacterAdded(char)
 	local humanoid = char:WaitForChild("Humanoid")
