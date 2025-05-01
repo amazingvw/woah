@@ -1,129 +1,19 @@
------------------------------------
--- CONFIGURATION
------------------------------------
-local MAX_SPEED     = 22.7
-local COIN_BUFFER   = 1
-
--- Spring config for steering
-local STEER_SPRING  = 45
-local STEER_DAMP    = 1
-local ROT_SPRING    = 700
-local ROT_DAMP      = 10
-
------------------------------------
--- SERVICES
------------------------------------
-local Players    = game:GetService("Players")
-local RunService = game:GetService("RunService")
-
------------------------------------
--- COIN CHECK FUNCTION
------------------------------------
-local function isValidCoin(model)
-	for _, descendant in ipairs(model:GetDescendants()) do
-		if (descendant:IsA("Part") or descendant:IsA("MeshPart")) and descendant.Transparency > 0.1 then
-			return false
-		end
-	end
-	return true
-end
-
-local function getNextCoin(hrp)
-	local best, bd = nil, math.huge
-	for _, obj in ipairs(workspace:GetDescendants()) do
-		if obj:IsA("BasePart") and obj.Name == "Coin_Server" then
-			local coinModel = obj:FindFirstAncestorOfClass("Model") or obj
-			if isValidCoin(coinModel) then
-				local d = (hrp.Position - obj.Position).Magnitude
-				if d < bd then
-					bd = d
-					best = coinModel
-				end
-			end
-		end
-	end
-	return best
-end
-
------------------------------------
--- MAIN LOOP FUNCTION
------------------------------------
-local function moveContinuously(char)
-	local hrp = char:WaitForChild("HumanoidRootPart")
-	local forward = hrp.CFrame.LookVector
-	local dirVel, rotVel = Vector3.zero, Vector3.zero
-	local currentCoin = nil
-
-	while char.Parent do
-		local dt = RunService.Heartbeat:Wait()
-
-		-- Refresh target
-		if not currentCoin or not isValidCoin(currentCoin) then
-			currentCoin = getNextCoin(hrp)
-		end
-
-		-- Handle collection
-		if currentCoin then
-			local coinPart = currentCoin:FindFirstChildWhichIsA("BasePart")
-			if coinPart then
-				local dist = (hrp.Position - coinPart.Position).Magnitude
-				local radius = coinPart.Size.Magnitude / 2 + COIN_BUFFER
-				if dist <= radius then
-					for _, part in ipairs(currentCoin:GetDescendants()) do
-						if part:IsA("BasePart") then
-							part.Transparency = 0.5
-							part.CanCollide = false
-						end
-					end
-					currentCoin = nil
-				end
-			end
-		end
-
-		-- Direction
-		local desiredDir = forward
-		if currentCoin then
-			local coinPart = currentCoin:FindFirstChildWhichIsA("BasePart")
-			if coinPart then
-				desiredDir = (coinPart.Position - hrp.Position).Unit
-			end
-		end
-
-		-- Steering + rotation
-		local dVel = desiredDir - forward
-		local steerAccel = dVel * STEER_SPRING
-		dirVel = (dirVel + steerAccel * dt) * math.exp(-STEER_DAMP * dt)
-		forward = (forward + dirVel * dt).Unit
-
-		local dLook = forward - hrp.CFrame.LookVector
-		local aLook = dLook * ROT_SPRING
-		rotVel = (rotVel + aLook * dt) * math.exp(-ROT_DAMP * dt)
-		local lookDir = (hrp.CFrame.LookVector + rotVel * dt).Unit
-
-		local newPos = hrp.Position + forward * MAX_SPEED * dt
-		hrp.CFrame = CFrame.new(newPos, newPos + lookDir)
-	end
-end
-
------------------------------------
--- NOCLIP SETUP
------------------------------------
-local floatName = "HumanoidRootPart" -- for safety in filtering
 local Noclip = nil
 local Clip = nil
 
-function noclip(char)
+function noclip()
 	Clip = false
-	if Noclip then Noclip:Disconnect() end
-	Noclip = RunService.Stepped:Connect(function()
-		if Clip == false and char then
-			for _, v in pairs(char:GetDescendants()) do
-				if v:IsA("BasePart") and v.CanCollide and v.Name ~= floatName then
+	local function Nocl()
+		if Clip == false and game.Players.LocalPlayer.Character ~= nil then
+			for _,v in pairs(game.Players.LocalPlayer.Character:GetDescendants()) do
+				if v:IsA('BasePart') and v.CanCollide and v.Name ~= floatName then
 					v.CanCollide = false
 				end
 			end
 		end
-	end)
+		wait(0.21) -- basic optimization
+	end
+	Noclip = game:GetService('RunService').Stepped:Connect(Nocl)
 end
 
 function clip()
@@ -131,24 +21,4 @@ function clip()
 	Clip = true
 end
 
------------------------------------
--- HANDLE RESPAWN
------------------------------------
-local function onCharacterAdded(char)
-	local humanoid = char:WaitForChild("Humanoid")
-	local hrp = char:WaitForChild("HumanoidRootPart")
-
-	workspace.Gravity = 0
-	humanoid.PlatformStand = true
-
-	noclip(char)
-	task.spawn(function()
-		moveContinuously(char)
-	end)
-end
-
-Players.LocalPlayer.CharacterAdded:Connect(onCharacterAdded)
-
-if Players.LocalPlayer.Character then
-	onCharacterAdded(Players.LocalPlayer.Character)
-end
+noclip() -- to toggle noclip() and clip()
