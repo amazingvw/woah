@@ -61,6 +61,7 @@ root.Anchored = true
 root.CanCollide = false
 root.Position = hrp.Position + Vector3.new(0,2,0)
 root.Parent = workspace
+root.Transparency = 1
 
 -- Build ignore list (character + root)
 local ignoreList = {root}
