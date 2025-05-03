@@ -1,31 +1,38 @@
 -- Configuration
 local Config = {
-    -- ROOT PART
-    RootPart_LookDirection_Lerp = 4,
-    RootPart_JumpPower = 50,
-    RootPart_Speed = 16,
+	-- ROOT PART
+	RootPart_LookDirection_Lerp = 15,
+	RootPart_JumpPower = 50,
+	RootPart_Speed = 20,
 
-    -- HumanoidRootPart follow spring
-    HRP_Frequency = 8,
-    HRP_Dampening = 0.5,
-    HRP_Directional_Lerp = 4,
+	-- HumanoidRootPart follow spring
+	HRP_Frequency = 4,
+	HRP_Dampening = 0.5,
+	HRP_Directional_Lerp = 9,
 
-    -- Physics simulation
-    Gravity = workspace.Gravity,
-    CollisionSizeBuffer = 4,
+	-- Physics simulation
+	Gravity = workspace.Gravity,
+	CollisionSizeBuffer = 3.1,
 
-    -- Funny swing offsets
-    Swing_Pos_Amplitude = Vector3.new(0.5, 0.5, 0.5),
-    Swing_Pos_Frequency = 1,
-    Swing_Rot_Amplitude = Vector3.new(20, 20, 20),
-    Swing_Rot_Frequency = 0.5,
+	-- Funny swing offsets
+	Swing_Pos_Amplitude = Vector3.new(0.5, 0.5, 0.5),
+	Swing_Pos_Frequency = 1,
+	Swing_Rot_Amplitude = Vector3.new(5, 5, 5),
+	Swing_Rot_Frequency = 0.5,
 
-    -- Custom Animations (rbxassetid://...)
-    Animations = {
-		Idle = "rbxassetid://17172918855",
-		Run  = "rbxassetid://10921261968",
-		Jump = "rbxassetid://10921263860",
-    },
+	-- Custom Animations (rbxassetid://...)
+	Animations = {
+		Idle     = "rbxassetid://10921259953",
+		Run      = "rbxassetid://11600211410",
+		Jump     = "rbxassetid://10921263860",
+		Fall     = "rbxassetid://45678901",
+	},
+	-- Delay before fall animation (seconds)
+	FallDelay = 0.5,
+
+	-- Tilt effect
+	Tilt_Intensity = Vector3.new(-15, 0, -15), -- degrees: X pitch, Y yaw, Z roll
+	Tilt_Lerp = 4,                         -- interpolation speed
 }
 
 -- Services
@@ -39,40 +46,70 @@ local character = player.Character or player.CharacterAdded:Wait()
 local hrp = character:WaitForChild("HumanoidRootPart")
 local humanoid = character:FindFirstChildOfClass("Humanoid")
 
--- Prevent default humanoid physics
+-- Prevent default humanoid physics and disable all part collisions
 if humanoid then
     humanoid.PlatformStand = true
 end
-hrp.CanCollide = false
+for _, part in ipairs(character:GetDescendants()) do
+    if part:IsA("BasePart") then
+        part.CanCollide = false
+    end
+end
 
 -- Create anchored Root
 local root = Instance.new("Part")
 root.Name = "Root"
-root.Size = Vector3.new(2,6.5,2)
+root.Size = Vector3.new(2,6.2,2)
 root.Anchored = true
 root.CanCollide = false
 root.Position = hrp.Position + Vector3.new(0,2,0)
 root.Parent = workspace
 
--- Raycast filter
-local rayParams = RaycastParams.new()
-rayParams.FilterDescendantsInstances = {character, root}
-rayParams.FilterType = Enum.RaycastFilterType.Blacklist
-rayParams.IgnoreWater = false
+-- Build ignore list of all character parts and root
+local ignoreList = {root}
+for _, part in ipairs(character:GetDescendants()) do
+    if part:IsA("BasePart") then
+        table.insert(ignoreList, part)
+    end
+end
 
--- Animation setup
-local animator = nil
-local idleTrack, runTrack, jumpTrack
+-- Raycast filters
+local wallParams = RaycastParams.new()
+wallParams.FilterDescendantsInstances = ignoreList
+wallParams.FilterType = Enum.RaycastFilterType.Blacklist
+wallParams.IgnoreWater = false
+
+local groundParams = RaycastParams.new()
+groundParams.FilterDescendantsInstances = ignoreList
+groundParams.FilterType = Enum.RaycastFilterType.Blacklist
+groundParams.IgnoreWater = false
+
+-- Animation setup using state machine
+local animator, animTracks = nil, {}
+local animState = "Idle" -- "Idle", "Run", "Jump", "Fall"
+
 if humanoid then
     animator = humanoid:FindFirstChildOfClass("Animator") or Instance.new("Animator", humanoid)
-    local idleAnim = Instance.new("Animation") idleAnim.AnimationId = Config.Animations.Idle
-    local runAnim  = Instance.new("Animation") runAnim.AnimationId  = Config.Animations.Run
-    local jumpAnim = Instance.new("Animation") jumpAnim.AnimationId = Config.Animations.Jump
-    idleTrack = animator:LoadAnimation(idleAnim)
-    runTrack  = animator:LoadAnimation(runAnim)
-    jumpTrack = animator:LoadAnimation(jumpAnim)
-    idleTrack.Looped = true
-    runTrack.Looped  = true
+    local function loadTrack(name, id, loop)
+        local anim = Instance.new("Animation") anim.Name = name; anim.AnimationId = id
+        local track = animator:LoadAnimation(anim)
+        track.Looped = loop
+        animTracks[name] = track
+    end
+    loadTrack("Idle", Config.Animations.Idle, true)
+    loadTrack("Run", Config.Animations.Run, true)
+    loadTrack("Jump", Config.Animations.Jump, false)
+    loadTrack("Fall", Config.Animations.Fall, true)
+    animTracks.Idle:Play()
+end
+
+local function playAnim(state)
+    if animState == state then return end
+    -- stop all
+    for name, track in pairs(animTracks) do track:Stop() end
+    -- play new
+    if animTracks[state] then animTracks[state]:Play() end
+    animState = state
 end
 
 -- State
@@ -81,161 +118,137 @@ local hrpVelocity = Vector3.new()
 local moveDir = Vector3.new()
 local jumpRequested = false
 local Timer = 0
-local isMoving = false
+local isGrounded = false
+local prevGrounded = true
 
--- Input handling
-UserInputService.InputBegan:Connect(function(input, gp)
-    if gp then return end
-    if input.KeyCode == Enum.KeyCode.Space then
-        jumpRequested = true
-        if jumpTrack then
-            runTrack:Stop()
-            idleTrack:Stop()
-            jumpTrack:Play()
-            -- After jump animation ends, resume correct track
-            jumpTrack.Stopped:Connect(function()
-                if isMoving then runTrack:Play() else idleTrack:Play() end
-            end)
-        end
-    end
-end)
+-- Ground check
+local function checkGrounded()
+    local ray = workspace:Raycast(root.Position, Vector3.new(0, -((root.Size.Y/2) + Config.CollisionSizeBuffer + 0.1), 0), groundParams)
+    return ray ~= nil
+end
 
--- Update movement direction
-local function updateInput()
+-- Input and animation transitions
+local function handleInput(dt)
+    -- Movement input
     local dir = Vector3.new()
-    local cam = workspace.CurrentCamera.CFrame
-    if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir += cam.LookVector end
-    if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir -= cam.LookVector end
-    if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir -= cam.RightVector end
-    if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir += cam.RightVector end
+    local camCF = workspace.CurrentCamera.CFrame
+    if UserInputService:IsKeyDown(Enum.KeyCode.W) then dir += camCF.LookVector end
+    if UserInputService:IsKeyDown(Enum.KeyCode.S) then dir -= camCF.LookVector end
+    if UserInputService:IsKeyDown(Enum.KeyCode.A) then dir -= camCF.RightVector end
+    if UserInputService:IsKeyDown(Enum.KeyCode.D) then dir += camCF.RightVector end
     dir = Vector3.new(dir.X,0,dir.Z)
     moveDir = dir.Magnitude > 0 and dir.Unit or Vector3.new()
 
-    -- Animation state transition
-    local moving = moveDir.Magnitude > 0
-    if moving ~= isMoving and humanoid then
-        isMoving = moving
-        if isMoving then
-            idleTrack:Stop()
-            runTrack:Play()
-        else
-            runTrack:Stop()
-            idleTrack:Play()
-        end
+    -- Jump input
+    if UserInputService:IsKeyDown(Enum.KeyCode.Space) and isGrounded then jumpRequested = true end
+
+    -- Decide animation state
+    if animState == "Jump" and animTracks.Jump.IsPlaying then
+        return -- keep jump state until finished
+    end
+    if not isGrounded then
+        playAnim("Fall")
+    elseif jumpRequested then
+        playAnim("Jump")
+        animTracks.Jump.Stopped:Connect(function()
+            jumpRequested = false
+            if not isGrounded then playAnim("Fall") end
+        end)
+    elseif moveDir.Magnitude > 0 then
+        playAnim("Run")
+    else
+        playAnim("Idle")
     end
 end
 
 -- Collision & gravity
 local function simulateCollision(pos, vel, dt)
+    -- unchanged from previous version
     local newPos = pos + vel * dt
     local corrVel = vel
     for _, axis in ipairs({Vector3.new(1,0,0), Vector3.new(0,0,1)}) do
         local comp = vel:Dot(axis)
         if comp ~= 0 then
             local dir = axis * math.sign(comp)
-            local dist = math.abs(comp*dt) + Config.CollisionSizeBuffer
-            if workspace:Raycast(pos, dir*dist, rayParams) then
-                corrVel -= axis * comp
-            end
+            local dist = math.abs(comp * dt) + Config.CollisionSizeBuffer
+            local hit = workspace:Raycast(pos, dir * dist, wallParams)
+            if hit and hit.Instance.CanCollide then corrVel = corrVel - axis * comp end
         end
     end
     if vel.Y ~= 0 then
-        local dir = Vector3.new(0,math.sign(vel.Y),0)
-        local dist = math.abs(vel.Y*dt) + Config.CollisionSizeBuffer
-        local hit = workspace:Raycast(pos, dir*dist, rayParams)
-        if hit then
+        local dir = Vector3.new(0, math.sign(vel.Y), 0)
+        local dist = math.abs(vel.Y * dt) + Config.CollisionSizeBuffer
+        local hit = workspace:Raycast(pos, dir * dist, groundParams)
+        if hit and hit.Instance.CanCollide then
             if vel.Y < 0 then
-                corrVel = Vector3.new(corrVel.X,0,corrVel.Z)
+                corrVel = Vector3.new(corrVel.X, 0, corrVel.Z)
                 newPos = Vector3.new(newPos.X, hit.Position.Y + root.Size.Y/2, newPos.Z)
-            else corrVel = Vector3.new(corrVel.X,0,corrVel.Z) end
+            else corrVel = Vector3.new(corrVel.X, 0, corrVel.Z) end
         end
     end
     return corrVel, newPos
 end
 
--- Spring follow with swing & animation
+-- Spring follow with tilt & random swing
 local function springFollow(dt)
-    Timer += dt
-    -- Random swing offsets
-    local ox = math.noise(Timer*Config.Swing_Pos_Frequency,0) * Config.Swing_Pos_Amplitude.X
-    local oy = math.noise(Timer*Config.Swing_Pos_Frequency,100) * Config.Swing_Pos_Amplitude.Y
-    local oz = math.noise(Timer*Config.Swing_Pos_Frequency,200) * Config.Swing_Pos_Amplitude.Z
-    local targetPos = root.Position + Vector3.new(ox,oy,oz)
-    -- Spring accel
-    local f,d = Config.HRP_Frequency, Config.HRP_Dampening
+    Timer = Timer + dt
+    -- combine swing & tilt as before
+    local ox = math.noise(Timer * Config.Swing_Pos_Frequency, 0) * Config.Swing_Pos_Amplitude.X
+    local oy = math.noise(Timer * Config.Swing_Pos_Frequency, 100) * Config.Swing_Pos_Amplitude.Y
+    local oz = math.noise(Timer * Config.Swing_Pos_Frequency, 200) * Config.Swing_Pos_Amplitude.Z
+    local swingPos = Vector3.new(ox, oy, oz)
+    local rx = math.noise(Timer * Config.Swing_Rot_Frequency, 300) * Config.Swing_Rot_Amplitude.X
+    local ry = math.noise(Timer * Config.Swing_Rot_Frequency, 400) * Config.Swing_Rot_Amplitude.Y
+    local rz = math.noise(Timer * Config.Swing_Rot_Frequency, 500) * Config.Swing_Rot_Amplitude.Z
+    local swingRot = CFrame.Angles(math.rad(rx), math.rad(ry), math.rad(rz))
+    local localMove = root.CFrame:VectorToObjectSpace(moveDir)
+    local tiltX = -localMove.Z * Config.Tilt_Intensity.X
+    local tiltZ = localMove.X * Config.Tilt_Intensity.Z
+    local tiltCFrame = CFrame.Angles(math.rad(tiltX), 0, math.rad(tiltZ))
+    local rootRot = root.CFrame - root.CFrame.Position
+    local targetRot = rootRot * tiltCFrame * swingRot
+    local targetPos = root.Position + swingPos
+    local f, d = Config.HRP_Frequency, Config.HRP_Dampening
     local accel = f*f*(targetPos - hrp.Position) - 2*f*d*hrpVelocity
-    hrpVelocity += accel * dt
+    hrpVelocity = hrpVelocity + accel * dt
     local newPos = hrp.Position + hrpVelocity * dt
-    -- Random swing rotation
-    local rx = math.noise(Timer*Config.Swing_Rot_Frequency,300)*Config.Swing_Rot_Amplitude.X
-    local ry = math.noise(Timer*Config.Swing_Rot_Frequency,400)*Config.Swing_Rot_Amplitude.Y
-    local rz = math.noise(Timer*Config.Swing_Rot_Frequency,500)*Config.Swing_Rot_Amplitude.Z
-    local swingRot = CFrame.Angles(math.rad(rx),math.rad(ry),math.rad(rz))
-    -- Combine with base orientation
-    local baseRot = root.CFrame - root.CFrame.Position
-    local targetRot = baseRot * swingRot
-    -- Lerp orientation
-    local curRot = hrp.CFrame - hrp.CFrame.Position
-    local lerpF = math.clamp(Config.HRP_Directional_Lerp*dt,0,1)
-    local newRot = curRot:Lerp(targetRot,lerpF)
-    -- Apply
-    hrp.CFrame = CFrame.new(newPos)*newRot
+    local currentRot = hrp.CFrame - hrp.CFrame.Position
+    local newRot = currentRot:Lerp(targetRot, math.clamp(Config.HRP_Directional_Lerp * dt, 0, 1))
+    hrp.CFrame = CFrame.new(newPos) * newRot
     hrp.AssemblyLinearVelocity = Vector3.zero
     hrp.AssemblyAngularVelocity = Vector3.zero
 end
 
 -- Main loop
 RunService.RenderStepped:Connect(function(dt)
-    updateInput()
-    -- Build velocity
-    local horiz = moveDir * Config.RootPart_Speed
-    velocity = Vector3.new(horiz.X, velocity.Y, horiz.Z)
-    -- Jump
-    if jumpRequested then
-        velocity = Vector3.new(velocity.X, Config.RootPart_JumpPower, velocity.Z)
-        jumpRequested = false
+    prevGrounded = isGrounded
+    isGrounded = checkGrounded()
+    if not prevGrounded and isGrounded then
+        playAnim(moveDir.Magnitude > 0 and "Run" or "Idle")
     end
-    -- Gravity
-    velocity += Vector3.new(0, -Config.Gravity*dt, 0)
-    -- Collision & move
+
+    handleInput(dt)
+
+    -- Movement and gravity
+    if jumpRequested and isGrounded then
+        velocity = Vector3.new(velocity.X, Config.RootPart_JumpPower, velocity.Z)
+        playAnim("Jump")
+    end
+    local horiz = moveDir * Config.RootPart_Speed
+    velocity = Vector3.new(horiz.X, velocity.Y, horiz.Z) + Vector3.new(0, -Config.Gravity * dt, 0)
     velocity, localPos = simulateCollision(root.Position, velocity, dt)
     root.Position = localPos
-    -- Rotate root toward movement or camera yaw
-    local flatV = Vector3.new(velocity.X,0,velocity.Z)
+
+    -- Rotate root
+    local flatV = Vector3.new(velocity.X, 0, velocity.Z)
     if flatV.Magnitude > 0.1 then
-        local desired = CFrame.new(root.Position, root.Position+flatV)
+        local desired = CFrame.new(root.Position, root.Position + flatV)
         if UserInputService.MouseBehavior == Enum.MouseBehavior.LockCenter then
-            local _, y,_ = workspace.CurrentCamera.CFrame:ToEulerAnglesYXZ()
-            desired = CFrame.new(root.Position)*CFrame.Angles(0,y,0)
+            local _, y, _ = workspace.CurrentCamera.CFrame:ToEulerAnglesYXZ()
+            desired = CFrame.new(root.Position) * CFrame.Angles(0, y, 0)
         end
-        root.CFrame = root.CFrame:Lerp(desired, math.clamp(Config.RootPart_LookDirection_Lerp*dt,0,1))
+        root.CFrame = root.CFrame:Lerp(desired, math.clamp(Config.RootPart_LookDirection_Lerp * dt, 0, 1))
     end
-    -- Follow with swing and animation
+
     springFollow(dt)
 end)
-
--- Supports custom idle/run/jump animations with smooth transitions.
-local Noclip = nil
-local Clip = nil
-
-function noclip()
-	Clip = false
-	local function Nocl()
-		if Clip == false and game.Players.LocalPlayer.Character ~= nil then
-			for _,v in pairs(game.Players.LocalPlayer.Character:GetDescendants()) do
-				if v:IsA('BasePart') and v.CanCollide and v.Name ~= floatName then
-					v.CanCollide = false
-				end
-			end
-		end
-		wait(0.21) -- basic optimization
-	end
-	Noclip = game:GetService('RunService').Stepped:Connect(Nocl)
-end
-
-function clip()
-	if Noclip then Noclip:Disconnect() end
-	Clip = true
-end
-
-noclip() -- to toggle noclip() and clip()
