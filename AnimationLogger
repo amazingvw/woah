@@ -115,7 +115,7 @@ Credits.BackgroundTransparency = 1
 Credits.Position = UDim2.new(0, 0, 1, -25)
 Credits.Size = UDim2.new(1, 0, 0, 25)
 Credits.Font = Enum.Font.SourceSans
-Credits.Text = "Code by yes hello"
+Credits.Text = "Code by ChatGPT and @Micronymous on Youtube"
 Credits.TextColor3 = Color3.fromRGB(255, 255, 255)
 Credits.TextSize = 14
 
