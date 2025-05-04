@@ -1,13 +1,14 @@
-local Players = game:GetService("Players")
+-- LocalScript in StarterPlayerScripts
+
+local Players         = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 
 -- ===== CONFIG =====
--- Put any animation IDs here that you want to filter out.
--- Use the numeric form (no "rbxassetid://").
+-- Animation IDs to filter out (numeric only)
 local BLACKLIST = {
-    17172918855,   -- example: Realistic Idle1
-    17173014241,   -- example: Realistic idle2
-    -- add more IDs as needed...
+    180436334,   -- example: Adam Idle
+    507766666,   -- example: Walk
+    -- add more as needed...
 }
 local blacklistSet = {}
 for _, id in ipairs(BLACKLIST) do
@@ -30,11 +31,15 @@ frame.BackgroundColor3 = Color3.fromRGB(20, 24, 24)
 frame.BorderSizePixel = 0
 frame.Active = true   -- needed for manual dragging
 
+-- Helper to round corners
 local function makeUICorner(parent, radius)
     local c = Instance.new("UICorner")
     c.CornerRadius = UDim.new(0, radius or 10)
     c.Parent = parent
 end
+
+-- Round the main frame
+makeUICorner(frame, 15)
 
 -- Title
 local title = Instance.new("TextLabel")
@@ -62,11 +67,12 @@ userLabel.TextXAlignment = Enum.TextXAlignment.Left
 -- Username input
 local usernameBox = Instance.new("TextBox")
 usernameBox.Parent = frame
+usernameBox.PlaceholderText = "Enter player name"
+usernameBox.Text = ""  -- ensure it starts blank
 usernameBox.Font = Enum.Font.SourceSansSemibold
 usernameBox.TextSize = 28
-usernameBox.Text = 
 usernameBox.TextColor3 = Color3.fromRGB(198, 239, 255)
-usernameBox.ClearTextOnFocus = True
+usernameBox.ClearTextOnFocus = false
 usernameBox.BackgroundColor3 = Color3.fromRGB(9, 11, 13)
 usernameBox.Position = UDim2.new(0.126,0,0.223,0)
 usernameBox.Size = UDim2.new(0,291,0,50)
