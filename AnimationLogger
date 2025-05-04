@@ -1,173 +1,197 @@
 -- LocalScript in StarterPlayerScripts
 
-local Players = game:GetService("Players")
+local Players         = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 
-local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
+-- ===== CONFIG =====
+-- Put any animation IDs here that you want to filter out.
+-- Use the numeric form (no "rbxassetid://").
+local BLACKLIST = {
+    180436334,   -- example: Adam Idle
+    507766666,   -- example: Walk
+    -- add more IDs as needed...
+}
+local blacklistSet = {}
+for _, id in ipairs(BLACKLIST) do
+    blacklistSet[tostring(id)] = true
+end
+-- ==================
 
--- Instances:
+-- Build the GUI
+local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "AnimationLoggerGUI"
+screenGui.Parent = playerGui
 
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Parent = playerGui
+local frame = Instance.new("Frame")
+frame.Name = "MainFrame"
+frame.Parent = screenGui
+frame.Size = UDim2.new(0, 389, 0, 468)
+frame.Position = UDim2.new(0.739, 0, 0.352, 0)
+frame.BackgroundColor3 = Color3.fromRGB(20, 24, 24)
+frame.BorderSizePixel = 0
+frame.Active = true   -- needed for manual dragging
 
-local Frame = Instance.new("Frame")
-local AnimationLogger = Instance.new("TextLabel")
-local UICorner = Instance.new("UICorner")
-local Output = Instance.new("TextBox")
-local UICorner_2 = Instance.new("UICorner")
-local Output_2 = Instance.new("TextLabel")
-local UsernameCaseSensitive = Instance.new("TextLabel")
-local Credits = Instance.new("TextLabel")
-local Loganimations = Instance.new("TextButton")
-local UICorner_3 = Instance.new("UICorner")
-local Username = Instance.new("TextBox")
-local UICorner_4 = Instance.new("UICorner")
+local function makeUICorner(parent, radius)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, radius or 10)
+    c.Parent = parent
+end
 
--- Properties:
+-- Title
+local title = Instance.new("TextLabel")
+title.Parent = frame
+title.Text = "Animation Logger"
+title.Font = Enum.Font.SourceSansBold
+title.TextSize = 37
+title.TextColor3 = Color3.fromRGB(179, 205, 208)
+title.BackgroundTransparency = 1
+title.Size = UDim2.new(1, 0, 0, 50)
+title.Position = UDim2.new(0,0,0.026,0)
 
-Frame.Parent = ScreenGui
-Frame.BackgroundColor3 = Color3.fromRGB(20, 24, 24)
-Frame.BorderSizePixel = 0
-Frame.Position = UDim2.new(0.739, 0, 0.352, 0)
-Frame.Size = UDim2.new(0, 389, 0, 468)
+-- Username label
+local userLabel = Instance.new("TextLabel")
+userLabel.Parent = frame
+userLabel.Text = "Username"
+userLabel.Font = Enum.Font.SourceSans
+userLabel.TextSize = 25
+userLabel.TextColor3 = Color3.fromRGB(212, 240, 255)
+userLabel.BackgroundTransparency = 1
+userLabel.Position = UDim2.new(0,49,0,70)
+userLabel.Size = UDim2.new(0,291,0,35)
+userLabel.TextXAlignment = Enum.TextXAlignment.Left
 
--- Make draggable:
-Frame.Active = true
-Frame.Draggable = true
+-- Username input
+local usernameBox = Instance.new("TextBox")
+usernameBox.Parent = frame
+usernameBox.PlaceholderText = "Enter player name"
+usernameBox.Font = Enum.Font.SourceSansSemibold
+usernameBox.TextSize = 28
+usernameBox.TextColor3 = Color3.fromRGB(198, 239, 255)
+usernameBox.ClearTextOnFocus = false
+usernameBox.BackgroundColor3 = Color3.fromRGB(9, 11, 13)
+usernameBox.Position = UDim2.new(0.126,0,0.223,0)
+usernameBox.Size = UDim2.new(0,291,0,50)
+makeUICorner(usernameBox)
 
-AnimationLogger.Name = "Animation Logger"
-AnimationLogger.Parent = Frame
-AnimationLogger.BackgroundTransparency = 1
-AnimationLogger.Size = UDim2.new(1, 0, 0, 50)
-AnimationLogger.Position = UDim2.new(0, 0, 0.026, 0)
-AnimationLogger.Font = Enum.Font.SourceSansBold
-AnimationLogger.Text = "Animation Logger"
-AnimationLogger.TextColor3 = Color3.fromRGB(179, 205, 208)
-AnimationLogger.TextSize = 37
-AnimationLogger.TextWrapped = true
+-- Output label
+local outputLabel = Instance.new("TextLabel")
+outputLabel.Parent = frame
+outputLabel.Text = "Output (IDs)"
+outputLabel.Font = Enum.Font.SourceSans
+outputLabel.TextSize = 25
+outputLabel.TextColor3 = Color3.fromRGB(212, 240, 255)
+outputLabel.BackgroundTransparency = 1
+outputLabel.Position = UDim2.new(0,49,0,162)
+outputLabel.Size = UDim2.new(0,291,0,35)
+outputLabel.TextXAlignment = Enum.TextXAlignment.Left
 
-UICorner.CornerRadius = UDim.new(0, 10)
-UICorner.Parent = Frame
+-- Output box
+local outputBox = Instance.new("TextBox")
+outputBox.Parent = frame
+outputBox.Font = Enum.Font.SourceSansSemibold
+outputBox.TextSize = 28
+outputBox.TextColor3 = Color3.fromRGB(198, 239, 255)
+outputBox.ClearTextOnFocus = false
+outputBox.MultiLine = true
+outputBox.Text = ""
+outputBox.BackgroundColor3 = Color3.fromRGB(9, 11, 13)
+outputBox.Position = UDim2.new(0.126,0,0.421,0)
+outputBox.Size = UDim2.new(0,291,0,147)
+makeUICorner(outputBox)
 
-Username.Name = "Username"
-Username.Parent = Frame
-Username.BackgroundColor3 = Color3.fromRGB(9, 11, 13)
-Username.BorderSizePixel = 0
-Username.Position = UDim2.new(0.126, 0, 0.223, 0)
-Username.Size = UDim2.new(0, 291, 0, 50)
-Username.ClearTextOnFocus = false
-Username.Font = Enum.Font.SourceSansSemibold
-Username.Text = ""
-Username.TextColor3 = Color3.fromRGB(198, 239, 255)
-Username.TextSize = 28
+-- Log button
+local logBtn = Instance.new("TextButton")
+logBtn.Parent = frame
+logBtn.Text = "Log current animations"
+logBtn.Font = Enum.Font.SourceSansBold
+logBtn.TextSize = 27
+logBtn.TextColor3 = Color3.fromRGB(54, 186, 129)
+logBtn.BackgroundColor3 = Color3.fromRGB(0, 8, 7)
+logBtn.Position = UDim2.new(0,49,0,367)
+logBtn.Size = UDim2.new(0,291,0,58)
+makeUICorner(logBtn, 30)
 
-UICorner_4.Parent = Username
+-- Credits
+local credits = Instance.new("TextLabel")
+credits.Parent = frame
+credits.Text = "Code by yes hello"
+credits.Font = Enum.Font.SourceSans
+credits.TextSize = 14
+credits.TextColor3 = Color3.fromRGB(255, 255, 255)
+credits.BackgroundTransparency = 1
+credits.Position = UDim2.new(0,0,1,-25)
+credits.Size = UDim2.new(1,0,0,25)
 
-UsernameCaseSensitive.Name = "Username (CaseSensitive)"
-UsernameCaseSensitive.Parent = Frame
-UsernameCaseSensitive.BackgroundTransparency = 1
-UsernameCaseSensitive.Position = UDim2.new(0, 49, 0, 70)
-UsernameCaseSensitive.Size = UDim2.new(0, 291, 0, 35)
-UsernameCaseSensitive.Font = Enum.Font.SourceSans
-UsernameCaseSensitive.Text = "Username"
-UsernameCaseSensitive.TextColor3 = Color3.fromRGB(212, 240, 255)
-UsernameCaseSensitive.TextSize = 25
-UsernameCaseSensitive.TextXAlignment = Enum.TextXAlignment.Left
+-- Make frame draggable
+local dragging, dragStart, startPos
+frame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = frame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+frame.InputChanged:Connect(function(input)
+    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local delta = input.Position - dragStart
+        frame.Position = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale,
+            startPos.Y.Offset + delta.Y
+        )
+    end
+end)
 
-Output_2.Name = "OutputLabel"
-Output_2.Parent = Frame
-Output_2.BackgroundTransparency = 1
-Output_2.Position = UDim2.new(0, 49, 0, 162)
-Output_2.Size = UDim2.new(0, 291, 0, 35)
-Output_2.Font = Enum.Font.SourceSans
-Output_2.Text = "Output (IDs)"
-Output_2.TextColor3 = Color3.fromRGB(212, 240, 255)
-Output_2.TextSize = 25
-Output_2.TextXAlignment = Enum.TextXAlignment.Left
-
-Output.Name = "Output"
-Output.Parent = Frame
-Output.BackgroundColor3 = Color3.fromRGB(9, 11, 13)
-Output.BorderSizePixel = 0
-Output.Position = UDim2.new(0.126, 0, 0.421, 0)
-Output.Size = UDim2.new(0, 291, 0, 147)
-Output.ClearTextOnFocus = false
-Output.Font = Enum.Font.SourceSansSemibold
-Output.Text = ""
-Output.TextColor3 = Color3.fromRGB(198, 239, 255)
-Output.TextSize = 28
-
-UICorner_2.CornerRadius = UDim.new(0, 10)
-UICorner_2.Parent = Output
-
-Loganimations.Name = "Log animations"
-Loganimations.Parent = Frame
-Loganimations.BackgroundColor3 = Color3.fromRGB(0, 8, 7)
-Loganimations.BorderSizePixel = 0
-Loganimations.Position = UDim2.new(0, 49, 0, 367)
-Loganimations.Size = UDim2.new(0, 291, 0, 58)
-Loganimations.Font = Enum.Font.SourceSansBold
-Loganimations.Text = "Log current animations"
-Loganimations.TextColor3 = Color3.fromRGB(54, 186, 129)
-Loganimations.TextSize = 27
-
-UICorner_3.CornerRadius = UDim.new(0, 30)
-UICorner_3.Parent = Loganimations
-
-Credits.Name = "Credits"
-Credits.Parent = Frame
-Credits.BackgroundTransparency = 1
-Credits.Position = UDim2.new(0, 0, 1, -25)
-Credits.Size = UDim2.new(1, 0, 0, 25)
-Credits.Font = Enum.Font.SourceSans
-Credits.Text = "Code by yes hello"
-Credits.TextColor3 = Color3.fromRGB(255, 255, 255)
-Credits.TextSize = 14
-
--- Button logic:
-
-Loganimations.MouseButton1Click:Connect(function()
-    -- clear previous
-    Output.Text = ""
-    local inputName = Username.Text
-    if inputName == "" then return end
-
-    -- find player (case-insensitive)
-    local target
+-- Helper: find player by case‑insensitive name
+local function findPlayerByName(name)
+    local lname = name:lower()
     for _, plr in ipairs(Players:GetPlayers()) do
-        if string.lower(plr.Name) == string.lower(inputName) then
-            target = plr
-            break
+        if plr.Name:lower() == lname then
+            return plr
         end
     end
+end
 
+-- Button logic
+logBtn.MouseButton1Click:Connect(function()
+    outputBox.Text = ""
+    local name = usernameBox.Text
+    if name == "" then return end
+
+    local target = findPlayerByName(name)
     if not target or not target.Character then
-        Output.Text = "Unable to find user"
+        outputBox.Text = "Unable to find user"
         return
     end
 
-    -- get Animator
     local humanoid = target.Character:FindFirstChildOfClass("Humanoid")
     local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
     if not animator then
-        -- no animations playing
+        outputBox.Text = "Default Animation(s)"
         return
     end
 
-    -- collect IDs
-    local ids = {}
+    -- Collect and filter IDs
+    local found = {}
     for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
         if track.Animation and track.Animation.AnimationId then
-            local num = track.Animation.AnimationId:match("%d+")
-            if num then
-                table.insert(ids, num)
+            local id = track.Animation.AnimationId:match("%d+")
+            if id and not blacklistSet[id] then
+                table.insert(found, id)
             end
         end
     end
 
-    -- output (one ID per line)
-    if #ids > 0 then
-        Output.Text = table.concat(ids, "\n")
+    if #found == 0 then
+        outputBox.Text = "Default Animation(s)"
+    else
+        outputBox.Text = table.concat(found, "\n")
     end
 end)
