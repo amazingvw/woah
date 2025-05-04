@@ -1,12 +1,22 @@
--- LocalScript in StarterPlayerScripts
+-- AnimationLogger.lua
+-- LocalScript to display a draggable UI and log animation IDs for a target player
 
 local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
 
--- Instances:
+-- Configuration:
+local Config = {
+    SpringStiffness = 300,   -- k: spring force constant
+    SpringDamping   = 30,    -- c: damping coefficient
+    Mass            = 1,     -- m: effective mass of the frame
+}
 
-local ScreenGui = Instance.new("ScreenGui")
+-- Build GUI:
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
+
+local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Parent = playerGui
 
 local Frame = Instance.new("Frame")
@@ -22,107 +32,162 @@ local UICorner_3 = Instance.new("UICorner")
 local Username = Instance.new("TextBox")
 local UICorner_4 = Instance.new("UICorner")
 
---Properties:
-
+-- Frame properties:
 Frame.Parent = ScreenGui
 Frame.BackgroundColor3 = Color3.fromRGB(20, 24, 24)
 Frame.BorderSizePixel = 0
+-- Initial scale-based position
 Frame.Position = UDim2.new(0.739, 0, 0.352, 0)
 Frame.Size = UDim2.new(0, 389, 0, 468)
-
-AnimationLogger.Name = "Animation Logger"
-AnimationLogger.Parent = Frame
-AnimationLogger.BackgroundTransparency = 1
-AnimationLogger.Size = UDim2.new(1, 0, 0, 50)
-AnimationLogger.Position = UDim2.new(0, 0, 0.026, 0)
-AnimationLogger.Font = Enum.Font.SourceSansBold
-AnimationLogger.Text = "Animation Logger"
-AnimationLogger.TextColor3 = Color3.fromRGB(179, 205, 208)
-AnimationLogger.TextSize = 37
-AnimationLogger.TextWrapped = true
-
 UICorner.CornerRadius = UDim.new(0, 10)
 UICorner.Parent = Frame
 
+-- Header Label
+AnimationLogger.Name = "Animation Logger"
+AnimationLogger.Parent = Frame
+AnimationLogger.BackgroundTransparency = 1
+AnimationLogger.Size = UDim2.new(1,0,0,50)
+AnimationLogger.Position = UDim2.new(0,0,0.026,0)
+AnimationLogger.Font = Enum.Font.SourceSansBold
+AnimationLogger.Text = "Animation Logger"
+AnimationLogger.TextColor3 = Color3.fromRGB(179,205,208)
+AnimationLogger.TextSize = 37
+AnimationLogger.TextWrapped = true
+
+-- Username box
 Username.Name = "Username"
 Username.Parent = Frame
-Username.BackgroundColor3 = Color3.fromRGB(9, 11, 13)
+Username.BackgroundColor3 = Color3.fromRGB(9,11,13)
 Username.BorderSizePixel = 0
-Username.Position = UDim2.new(0.126, 0, 0.223, 0)
-Username.Size = UDim2.new(0, 291, 0, 50)
+Username.Position = UDim2.new(0.126,0,0.223,0)
+Username.Size = UDim2.new(0,291,0,50)
 Username.ClearTextOnFocus = false
 Username.Font = Enum.Font.SourceSansSemibold
 Username.Text = ""
-Username.TextColor3 = Color3.fromRGB(198, 239, 255)
+Username.TextColor3 = Color3.fromRGB(198,239,255)
 Username.TextSize = 28
-
+UiCorner_4.CornerRadius = UDim.new(0,10)
 UICorner_4.Parent = Username
 
-UsernameCaseSensitive.Name = "Username (CaseSensitive)"
+-- Username label
+UsernameCaseSensitive.Name = "UsernameLabel"
 UsernameCaseSensitive.Parent = Frame
 UsernameCaseSensitive.BackgroundTransparency = 1
-UsernameCaseSensitive.Position = UDim2.new(0, 49, 0, 70)
-UsernameCaseSensitive.Size = UDim2.new(0, 291, 0, 35)
+UsernameCaseSensitive.Position = UDim2.new(0,49,0,70)
+UsernameCaseSensitive.Size = UDim2.new(0,291,0,35)
 UsernameCaseSensitive.Font = Enum.Font.SourceSans
 UsernameCaseSensitive.Text = "Username"
-UsernameCaseSensitive.TextColor3 = Color3.fromRGB(212, 240, 255)
+UsernameCaseSensitive.TextColor3 = Color3.fromRGB(212,240,255)
 UsernameCaseSensitive.TextSize = 25
 UsernameCaseSensitive.TextXAlignment = Enum.TextXAlignment.Left
 
+-- Output label
 Output_2.Name = "OutputLabel"
 Output_2.Parent = Frame
 Output_2.BackgroundTransparency = 1
-Output_2.Position = UDim2.new(0, 49, 0, 162)
-Output_2.Size = UDim2.new(0, 291, 0, 35)
+Output_2.Position = UDim2.new(0,49,0,162)
+Output_2.Size = UDim2.new(0,291,0,35)
 Output_2.Font = Enum.Font.SourceSans
 Output_2.Text = "Output (IDs)"
-Output_2.TextColor3 = Color3.fromRGB(212, 240, 255)
+Output_2.TextColor3 = Color3.fromRGB(212,240,255)
 Output_2.TextSize = 25
 Output_2.TextXAlignment = Enum.TextXAlignment.Left
 
+-- Output box
 Output.Name = "Output"
 Output.Parent = Frame
-Output.BackgroundColor3 = Color3.fromRGB(9, 11, 13)
+Output.BackgroundColor3 = Color3.fromRGB(9,11,13)
 Output.BorderSizePixel = 0
-Output.Position = UDim2.new(0.126, 0, 0.421, 0)
-Output.Size = UDim2.new(0, 291, 0, 147)
+Output.Position = UDim2.new(0.126,0,0.421,0)
+Output.Size = UDim2.new(0,291,0,147)
 Output.ClearTextOnFocus = false
 Output.Font = Enum.Font.SourceSansSemibold
 Output.Text = ""
-Output.TextColor3 = Color3.fromRGB(198, 239, 255)
+Output.TextColor3 = Color3.fromRGB(198,239,255)
 Output.TextSize = 28
-
-UICorner_2.CornerRadius = UDim.new(0, 10)
+UICorner_2.CornerRadius = UDim.new(0,10)
 UICorner_2.Parent = Output
 
+-- Log button
 Loganimations.Name = "Log animations"
 Loganimations.Parent = Frame
-Loganimations.BackgroundColor3 = Color3.fromRGB(0, 8, 7)
+Loganimations.BackgroundColor3 = Color3.fromRGB(0,8,7)
 Loganimations.BorderSizePixel = 0
-Loganimations.Position = UDim2.new(0, 49, 0, 367)
-Loganimations.Size = UDim2.new(0, 291, 0, 58)
+Loganimations.Position = UDim2.new(0,49,0,367)
+Loganimations.Size = UDim2.new(0,291,0,58)
 Loganimations.Font = Enum.Font.SourceSansBold
 Loganimations.Text = "Log current animations"
-Loganimations.TextColor3 = Color3.fromRGB(54, 186, 129)
+Loganimations.TextColor3 = Color3.fromRGB(54,186,129)
 Loganimations.TextSize = 27
-
-UICorner_3.CornerRadius = UDim.new(0, 30)
+UICorner_3.CornerRadius = UDim.new(0,30)
 UICorner_3.Parent = Loganimations
 
+-- Credits
 Credits.Name = "Credits"
 Credits.Parent = Frame
 Credits.BackgroundTransparency = 1
-Credits.Position = UDim2.new(0, 0, 1, -25)
-Credits.Size = UDim2.new(1, 0, 0, 25)
+Credits.Position = UDim2.new(0,0,1,-25)
+Credits.Size = UDim2.new(1,0,0,25)
 Credits.Font = Enum.Font.SourceSans
-Credits.Text = "Code by ChatGPT and @Micronymous on Youtube"
-Credits.TextColor3 = Color3.fromRGB(255, 255, 255)
+Credits.Text = "Code by ChatGpt"
+Credits.TextColor3 = Color3.fromRGB(255,255,255)
 Credits.TextSize = 14
 
--- Button logic:
+-- Convert initial scale position to absolute offset for pixel-based dragging
+RunService.RenderStepped:Wait() -- ensure layout is ready
+local absPos = Frame.AbsolutePosition
+local currentPos = Vector2.new(absPos.X, absPos.Y)
+local targetPos = currentPos
+Frame.Position = UDim2.new(0, currentPos.X, 0, currentPos.Y)
 
+-- Spring state
+local velocity = Vector2.new(0,0)
+local dragging = false
+local dragStartInputPos
+local dragStartPos
+local dragInput
+
+-- Input handlers
+Frame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragInput = nil
+        dragStartInputPos = input.Position
+        dragStartPos = currentPos
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+Frame.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement then
+        dragInput = input
+    end
+end)
+
+-- Spring update loop
+RunService.RenderStepped:Connect(function(dt)
+    if dragging and dragInput then
+        local deltaPos = dragInput.Position - dragStartInputPos
+        targetPos = dragStartPos + deltaPos
+    end
+
+    -- spring physics: F = -k(x - target) - c v
+    local displacement = targetPos - currentPos
+    local force = displacement * Config.SpringStiffness
+    local damping = -velocity * Config.SpringDamping
+    local acceleration = (force + damping) / Config.Mass
+    velocity = velocity + acceleration * dt
+    currentPos = currentPos + velocity * dt
+
+    Frame.Position = UDim2.new(0, currentPos.X, 0, currentPos.Y)
+end)
+
+-- Button logic to log animations
 Loganimations.MouseButton1Click:Connect(function()
-    -- clear previous
     Output.Text = ""
     local inputName = Username.Text
     if inputName == "" then return end
@@ -137,30 +202,22 @@ Loganimations.MouseButton1Click:Connect(function()
     end
 
     if not target or not target.Character then
-        Output.Text = "Unable to find username"
+        Output.Text = "Unable to find user"
         return
     end
 
-    -- get Animator
     local humanoid = target.Character:FindFirstChildOfClass("Humanoid")
     local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
-    if not animator then
-        -- no animations playing
-        return
-    end
+    if not animator then return end
 
-    -- collect IDs
     local ids = {}
     for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
         if track.Animation and track.Animation.AnimationId then
             local num = track.Animation.AnimationId:match("%d+")
-            if num then
-                table.insert(ids, num)
-            end
+            if num then table.insert(ids, num) end
         end
     end
 
-    -- output (one ID per line)
     if #ids > 0 then
         Output.Text = table.concat(ids, "\n")
     end
