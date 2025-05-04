@@ -4,13 +4,16 @@ local Players         = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 
 -- ===== CONFIG =====
--- Animation IDs to filter out (numeric only)
+-- Animation IDs to filter out (numeric form only, no "rbxassetid://" prefix)
 local BLACKLIST = {
-    17172918855,
+    17172918855,   -- example: Adam Idle
+    507766666,   -- example: Walk
+    -- add more as needed...
 }
+-- build a lookup set with numeric keys
 local blacklistSet = {}
 for _, id in ipairs(BLACKLIST) do
-    blacklistSet[tostring(id)] = true
+    blacklistSet[id] = true
 end
 -- ==================
 
@@ -29,7 +32,6 @@ frame.BackgroundColor3 = Color3.fromRGB(20, 24, 24)
 frame.BorderSizePixel = 0
 frame.Active = true   -- needed for manual dragging
 
--- Helper to round corners
 local function makeUICorner(parent, radius)
     local c = Instance.new("UICorner")
     c.CornerRadius = UDim.new(0, radius or 10)
@@ -66,7 +68,7 @@ userLabel.TextXAlignment = Enum.TextXAlignment.Left
 local usernameBox = Instance.new("TextBox")
 usernameBox.Parent = frame
 usernameBox.PlaceholderText = "Enter player name"
-usernameBox.Text = ""  -- ensure it starts blank
+usernameBox.Text = ""  -- ensure blank at start
 usernameBox.Font = Enum.Font.SourceSansSemibold
 usernameBox.TextSize = 28
 usernameBox.TextColor3 = Color3.fromRGB(198, 239, 255)
@@ -180,13 +182,14 @@ logBtn.MouseButton1Click:Connect(function()
         return
     end
 
-    -- Collect and filter IDs
+    -- Collect and filter IDs numerically
     local found = {}
     for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-        if track.Animation and track.Animation.AnimationId then
-            local id = track.Animation.AnimationId:match("%d+")
-            if id and not blacklistSet[id] then
-                table.insert(found, id)
+        local assetId = track.Animation and track.Animation.AnimationId
+        if assetId then
+            local idNum = tonumber(assetId:match("%d+"))
+            if idNum and not blacklistSet[idNum] then
+                table.insert(found, tostring(idNum))
             end
         end
     end
