@@ -31,6 +31,7 @@ frame.Position = UDim2.new(0.739, 0, 0.352, 0)
 frame.BackgroundColor3 = Color3.fromRGB(20, 24, 24)
 frame.BorderSizePixel = 0
 frame.Active = true   -- needed for manual dragging
+makeUICorner(mainFrame)
 
 local function makeUICorner(parent, radius)
     local c = Instance.new("UICorner")
@@ -65,10 +66,9 @@ userLabel.TextXAlignment = Enum.TextXAlignment.Left
 local usernameBox = Instance.new("TextBox")
 usernameBox.Parent = frame
 usernameBox.Font = Enum.Font.SourceSansSemibold
-UsernameBox.Text = 
 usernameBox.TextSize = 28
 usernameBox.TextColor3 = Color3.fromRGB(198, 239, 255)
-usernameBox.ClearTextOnFocus = false
+usernameBox.ClearTextOnFocus = True
 usernameBox.BackgroundColor3 = Color3.fromRGB(9, 11, 13)
 usernameBox.Position = UDim2.new(0.126,0,0.223,0)
 usernameBox.Size = UDim2.new(0,291,0,50)
