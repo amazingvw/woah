@@ -1,19 +1,353 @@
--- LocalScript in StarterPlayerScripts
-
 local Players          = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 
--- ===== CONFIG =====
--- List any animation IDs here (numeric only, no "rbxassetid://" prefix)
+-- ===== BLACKLIST =====
+-- Preset of Animation IDs to prevent unwanted outputs
 local BLACKLIST = {
-    17172918855,   -- example: Adam Idle
-    507766666,   -- example: Walk
-    -- add more as needed...
+	-- Default Animations (R6)
+	180435571,   -- Animation1; From idle
+	180435792,   -- Animation2; From idle
+	180426354,   -- RunAnim; From run
+	125750702,   -- JumpAnim; From jump
+	180436334,   -- ClimbAnim; From climb
+	182393478,   -- ToolNoneAnim; From toolnone
+	180436148,   -- FallAnim; From fall
+	178130996,   -- SitAnim; From sit
+
+	-- Default Animations (R15)
+	507766388,   -- Animation1; From idle
+	507766666,   -- Animation2; From idle
+	913402848,   -- WalkAnim; From walk
+	913376220,   -- RunAnim; From run
+	507765000,   -- JumpAnim; From jump
+	507767968,   -- FallAnim; From fall
+	507765644,   -- ClimbAnim; From climb
+	913389285,   -- SwimIdle; From swimidle
+	913384386,   -- Swim; From swim
+	507770239,   -- WaveAnim; From wave
+	507770677,   -- CheerAnim; From cheer
+	507770453,   -- PointAnim; From point
+	507770818,   -- LaughAnim; From laugh
+	507771019,   -- Animation1; From dance
+	507771955,   -- Animation2; From dance
+	507772104,   -- Animation3; From dance
+	507776043,   -- Animation1; From dance2
+	507776720,   -- Animation2; From dance2
+	507776879,   -- Animation3; From dance2
+	507777268,   -- Animation1; From dance3
+	507777451,   -- Animation2; From dance3
+	507777623,   -- Animation3; From dance3
+	2506281703,  -- SitAnim; From sit
+	522638767,   -- ToolLungeAnim; From toollunge
+	507768375,   -- ToolNoneAnim; From toolnone
+	522635514,   -- ToolSlashAnim; From toolslash
+	7715096377,  -- Animation1; From mood
+
+	-- Rthro Animation
+	10921258489,  -- Animation2; From idle
+	10921259953,  -- Animation1; From idle
+	10921269718,  -- WalkAnim; From walk
+	10921261968,  -- RunAnim; From run
+	10921263860,  -- JumpAnim; From jump
+	10921262864,  -- FallAnim; From fall
+	10921257536,  -- ClimbAnim; From climb
+	10921265698,  -- SwimIdle; From swimidle
+	10921264784,  -- Swim; From swim
+	10921261056,  -- RthroIdlePose; From pose
+
+	-- Realistic Animation
+	17172918855,  -- Animation1; From idle
+	17173014241,  -- Animation2; From idle
+	11600249883,  -- WalkAnim; From walk
+	11600211410,  -- RunAnim; From run
+	11600210487,  -- JumpAnim; From jump
+	11600206437,  -- FallAnim; From fall
+	11600205519,  -- ClimbAnim; From climb
+	11600213505,  -- SwimIdle; From swimidlew
+	11600212676,  -- Swim; From swim
+	11600209531,  -- RthroIdlePose; From pose
+	13830572947,  -- Animation1; From mood
+
+	-- Cartoony Animation
+	10921071918,  -- Animation1; From idle
+	10921072875,  -- Animation2; From idle
+	10921082452,  -- WalkAnim; From walk
+	10921076136,  -- RunAnim; From run
+	10921078135,  -- JumpAnim; From jump
+	10921077030,  -- FallAnim; From fall
+	10921070953,  -- ClimbAnim; From climb
+	10921081059,  -- SwimIdle; From swimidle
+	10921079380,  -- Swim; From swim
+	10921074502,  -- CartoonyPose; From pose
+
+	-- Levitation Animation
+	10921132962,  -- Animation1; From idle
+	10921133721,  -- Animation2; From idle
+	10921140719,  -- WalkAnim; From walk
+	10921135644,  -- RunAnim; From run
+	10921137402,  -- !ID!; From jump
+	10921136539,  -- FallAnim; From fall
+	10921132092,  -- ClimbAnim; From climb
+	10921139478,  -- SwimIdle; From swimidle
+	10921138209,  -- Swim; From swim
+	10921134514,  -- LevitationPose; From pose
+
+	-- Robot Animation
+	10921248039,  -- Animation1; From idle
+	10921248831,  -- Animation2; From idle
+	10921255446,  -- WalkAnim; From walk
+	10921250460,  -- RunAnim; From run
+	10921252123,  -- JumpAnim; From jump
+	10921251156,  -- FallAnim; From fall
+	10921247141,  -- ClimbAnim; From climb
+	10921253767,  -- SwimIdle; From swimidle
+	10921253142,  -- Swim; From swim
+	10921249579,  -- RobotPose; From pose
+
+	-- Stylish Animation
+	10921272275,  -- Animation1; From idle
+	10921273958,  -- Animation2; From idle
+	10921283326,  -- WalkAnim; From walk
+	10921276116,  -- RunAnim; From run
+	10921279832,  -- JumpAnim; From jump
+	10921278648,  -- FallAnim; From fall
+	10921271391,  -- ClimbAnim; From climb
+	10921281964,  -- SwimIdle; From swimidle
+	10921281000,  -- Swim; From swim
+	10921275151,  -- StylishPose; From pose
+
+	-- Superhero Animation
+	10921288909,  -- Animation1; From idle
+	10921290167,  -- Animation2; From idle
+	10921298616,  -- RunAnim; From walk
+	10921291831,  -- RunAnim; From run
+	10921294559,  -- JumpAnim; From jump
+	10921293373,  -- FallAnim; From fall
+	10921286911,  -- ClimbAnim; From climb
+	10921297391,  -- SwimIdle; From swimidle
+	10921295495,  -- Swim; From swim
+	10921290942,  -- SuperheroPose; From pose
+
+	-- Zombie Animation
+	10921344533,  -- Animation1; From idle
+	10921345304,  -- Animation2; From idle
+	10921355261,  -- WalkAnim; From walk
+	616163682,    -- RunAnim; From run
+	10921351278,  -- JumpAnim; From jump
+	10921350320,  -- FallAnim; From fall
+	10921343576,  -- ClimbAnim; From climb
+	10921353442,  -- SwimIdle; From swimidle
+	10921352344,  -- Swim; From swim
+	10921347258,  -- ZombiePose; From pose
+
+	-- Ninja Animation
+	10921155160,  -- Animation1; From idle
+	10921155867,  -- Animation2; From idle
+	10921162768,  -- WalkAnim; From walk
+	10921157929,  -- RunAnim; From run
+	10921160088,  -- JumpAnim; From jump
+	10921159222,  -- FallAnim; From fall
+	10921154678,  -- ClimbAnim; From climb
+	10922757002,  -- SwimIdle; From swimidle
+	10921161002,  -- Swim; From swim
+	10921156883,  -- NinjaPose; From pose
+
+	-- Knight Animation
+	10921117521,  -- Animation1; From idle
+	10921118894,  -- Animation2; From idle
+	10921127095,  -- WalkAnim; From walk
+	10921121197,  -- RunAnim; From run
+	10921123517,  -- JumpAnim; From jump
+	10921122579,  -- FallAnim; From fall
+	10921116196,  -- ClimbAnim; From climb
+	10921125935,  -- SwimIdle; From swimidle
+	10921125160,  -- Swim; From swim
+	10921119700,  -- KnightPose; From pose
+
+	-- Mage Animation
+	10921144709,  -- Animation1; From idle
+	10921145797,  -- Animation2; From idle
+	10921152678,  -- WalkAnim; From walk
+	10921148209,  -- RunAnim; From run
+	10921149743,  -- JumpAnim; From jump
+	10921148939,  -- FallAnim; From fall
+	10921143404,  -- ClimbAnim; From climb
+	10921151661,  -- SwimIdle; From swimidle
+	10921150788,  -- Swim; From swim
+	10921146941,  -- MagePose; From pose
+
+	-- Pirate Animation
+	750781874,    -- Animation1; From idle
+	750782770,    -- Animation2; From idle
+	750785693,    -- WalkAnim; From walk
+	750783738,    -- RunAnim; From run
+	750782230,    -- !ID!; From jump
+	750780242,    -- FallAnim; From fall
+	750779899,    -- ClimbAnim; From climb
+	750785176,    -- SwimIdle; From swimidle
+	750784579,    -- Swim; From swim
+	885515365,    -- PiratePose; From pose
+
+	-- Elder Animation
+	10921101664,  -- Animation1; From idle
+	10921102574,  -- Animation2; From idle
+	10921111375,  -- WalkAnim; From walk
+	10921104374,  -- RunAnim; From run
+	10921107367,  -- JumpAnim; From jump
+	10921105765,  -- FallAnim; From fall
+	10921100400,  -- ClimbAnim; From climb
+	10921110146,  -- SwimIdle; From swimidle
+	10921108971,  -- Swim; From swim
+	10921103538,  -- ElderPose; From pose
+
+	-- Toy Animation
+	10921301576,  -- Animation1; From idle
+	10921302207,  -- Animation2; From idle
+	10921312010,  -- WalkAnim; From walk
+	10921306285,  -- RunAnim; From run
+	10921308158,  -- JumpAnim; From jump
+	10921307241,  -- FallAnim; From fall
+	10921300839,  -- ClimbAnim; From climb
+	10921310341,  -- SwimIdle; From swimidle
+	10921309319,  -- Swim; From swim
+	10921303913,  -- ToyPose; From pose
+
+	-- Bubbly Animation
+	10921054344,  -- Animation1; From idle
+	10921055107,  -- Animation2; From idle
+	10980888364,  -- WalkAnim; From walk
+	10921057244,  -- RunAnim; From run
+	10921062673,  -- JumpAnim; From jump
+	10921061530,  -- FallAnim; From fall
+	10921053544,  -- ClimbAnim; From climb
+	10922582160,  -- SwimIdle; From swimidle
+	10921063569,  -- Swim; From swim
+	10921056055,  -- PoseAnim; From pose
+
+	-- Astronaut Animation
+	10921034824,  -- Animation1; From idle
+	10921036806,  -- Animation2; From idle
+	10921046031,  -- WalkAnim; From walk
+	10921039308,  -- RunAnim; From run
+	10921042494,  -- JumpAnim; From jump
+	10921040576,  -- FallAnim; From fall
+	10921032124,  -- ClimbAnim; From climb
+	10921045006,  -- SwimIdle; From swimidle
+	10921044000,  -- Swim; From swim
+	10921038149,  -- PoseAnim; From pose
+
+	-- Vampire Animation
+	10921315373,  -- Animation1; From idle
+	10921316709,  -- Animation2; From idle
+	10921326949,  -- WalkAnim; From walk
+	10921320299,  -- RunAnim; From run
+	10921322186,  -- JumpAnim; From jump
+	10921321317,  -- FallAnim; From fall
+	10921314188,  -- ClimbAnim; From climb
+	10921325443,  -- SwimIdle; From swimidle
+	10921324408,  -- Swim; From swim
+	10921317792,  -- PoseAnim; From pose
+
+	-- Werewolf Animation
+	10921330408,  -- Animation1; From idle
+	10921333667,  -- Animation2; From idle
+	10921342074,  -- WalkAnim; From walk
+	10921336997,  -- RunAnim; From run
+	1083218792,   -- !ID!; From jump
+	10921337907,  -- FallAnim; From fall
+	10921329322,  -- ClimbAnim; From climb
+	10921341319,  -- SwimIdle; From swimidle
+	10921340419,  -- Swim; From swim
+	10921334755,  -- PoseAnim; From pose
+
+	-- Oldschool Animation
+	10921230744,  -- Animation1; From idle
+	10921232093,  -- Animation2; From idle
+	10921244891,  -- walk; From walk
+	10921240218,  -- run; From run
+	10921242013,  -- jump; From jump
+	10921241244,  -- fall; From fall
+	10921229866,  -- ClimbAnim; From climb
+	10921244018,  -- SwimIdle; From swimidle
+	10921243048,  -- Swim; From swim
+	10921233298,  -- Animation; From pose
+
+	-- Bold Animation
+	16738333868,  -- Animation1; From idle
+	16738334710,  -- Animation2; From idle
+	16738340646,  -- WalkAnim; From walk
+	16738337225,  -- RunAnim; From run
+	16738336650,  -- JumpAnim; From jump
+	16738333171,  -- FallAnim; From fall
+	16738332169,  -- ClimbAnim; From climb
+	16738339817,  -- SwimIdle; From swimidle
+	16738339158,  -- Swim; From swim
+	16738335517,  -- BoldPose; From pose
+
+	-- Adidas Sport Animation
+	18537376492,  -- Animation1; From idle
+	18537371272,  -- Animation2; From idle
+	18537392113,  -- WalkAnim; From walk
+	18537384940,  -- RunAnim; From run
+	18537380791,  -- JumpAnim; From jump
+	18537367238,  -- FallAnim; From fall
+	18537363391,  -- ClimbAnim; From climb
+	18537387180,  -- SwimIdle; From swimidle
+	18537389531,  -- Swim; From swim
+	18537374150,  -- StylishPose; From pose
+
+	-- No Boundaries Animation
+	18747067405,  -- Animation1; From idle
+	18747063918,  -- Animation2; From idle
+	18747074203,  -- WalkAnim; From walk
+	18747070484,  -- RunAnim; From run
+	18747069148,  -- JumpAnim; From jump
+	18747062535,  -- FallAnim; From fall
+	18747060903,  -- ClimbAnim; From climb
+	18747071682,  -- SwimIdle; From swimidle
+	18747073181,  -- Swim; From swim
+	18747065848,  -- Pose; From pose
+
+	-- NFL Animation
+	92080889861410,   -- Animation1; From idle
+	74451233229259,   -- Animation2; From idle
+	110358958299415,  -- WalkAnim; From walk
+	117333533048078,  -- RunAnim; From run
+	119846112151352,  -- JumpAnim; From jump
+	129773241321032,  -- FallAnim; From fall
+	134630013742019,  -- ClimbAnim; From climb
+	79090109939093,   -- SwimIdle; From swimidle
+	132697394189921,  -- Swim; From swim
+	80884010501210,   -- Pose; From pose
+
+	-- Wicked Popular Animation
+	118832222982049,  -- Animation1; From idle
+	76049494037641,   -- Animation2; From idle
+	92072849924640,   -- WalkAnim; From walk
+	72301599441680,   -- RunAnim; From run
+	104325245285198,  -- JumpAnim; From jump
+	121152442762481,  -- FallAnim; From fall
+	131326830509784,  -- ClimbAnim; From climb
+	113199415118199,  -- SwimIdle; From swimidle
+	99384245425157,   -- Swim; From swim
+	138255200176080,  -- StylishPose; From pose
+
+	-- Catwalk Glam Animation
+	133806214992291,  -- Animation1; From idle
+	94970088341563,   -- Animation2; From idle
+	109168724482748,  -- WalkAnim; From walk
+	81024476153754,   -- RunAnim; From run
+	116936326516985,  -- JumpAnim; From jump
+	92294537340807,   -- FallAnim; From fall
+	119377220967554,  -- ClimbAnim; From climb
+	98854111361360,   -- SwimIdle; From swimidle
+	134591743181628,  -- Swim; From swim
+	87105332133518,   -- StylishPose; From pose	
 }
 -- Build a lookup set with numeric keys
 local blacklistSet = {}
 for _, id in ipairs(BLACKLIST) do
-    blacklistSet[id] = true
+	blacklistSet[id] = true
 end
 -- ==================
 
@@ -33,9 +367,9 @@ frame.BorderSizePixel = 0
 frame.Active          = true  -- needed for dragging
 
 local function makeUICorner(parent, radius)
-    local c = Instance.new("UICorner")
-    c.CornerRadius = UDim.new(0, radius or 10)
-    c.Parent       = parent
+	local c = Instance.new("UICorner")
+	c.CornerRadius = UDim.new(0, radius or 10)
+	c.Parent       = parent
 end
 
 -- Round the main frame
@@ -55,7 +389,7 @@ title.Position           = UDim2.new(0, 0, 0.026, 0)
 -- Username label
 local userLabel = Instance.new("TextLabel")
 userLabel.Parent           = frame
-userLabel.Text             = "Username"
+userLabel.Text             = "Username (Full)"
 userLabel.Font             = Enum.Font.SourceSans
 userLabel.TextSize         = 25
 userLabel.TextColor3       = Color3.fromRGB(212, 240, 255)
@@ -68,7 +402,8 @@ userLabel.TextXAlignment   = Enum.TextXAlignment.Left
 local usernameBox = Instance.new("TextBox")
 usernameBox.Parent          = frame
 usernameBox.PlaceholderText = "Enter player name"
-usernameBox.Text            = ""  -- start blank
+usernameBox.PlaceholderColor3 = Color3.fromRGB(104, 125, 134)
+usernameBox.Text            = ""  
 usernameBox.Font            = Enum.Font.SourceSansSemibold
 usernameBox.TextSize        = 28
 usernameBox.TextColor3      = Color3.fromRGB(198, 239, 255)
@@ -92,17 +427,19 @@ outputLabel.TextXAlignment = Enum.TextXAlignment.Left
 
 -- Output box
 local outputBox = Instance.new("TextBox")
-outputBox.Parent          = frame
-outputBox.Font            = Enum.Font.SourceSansSemibold
-outputBox.TextSize        = 28
-outputBox.TextColor3      = Color3.fromRGB(198, 239, 255)
-outputBox.ClearTextOnFocus= false
-outputBox.MultiLine       = true
-outputBox.Text            = ""
-outputBox.BackgroundColor3= Color3.fromRGB(9, 11, 13)
-outputBox.Position        = UDim2.new(0.126, 0, 0.421, 0)
-outputBox.Size            = UDim2.new(0, 291, 0, 147)
+outputBox.Parent = frame
+outputBox.Font = Enum.Font.SourceSansSemibold
+outputBox.TextSize = 28
+outputBox.TextColor3 = Color3.fromRGB(198, 239, 255)
+outputBox.ClearTextOnFocus = false
+outputBox.TextEditable = false
+outputBox.MultiLine = true
+outputBox.Text = ""
+outputBox.BackgroundColor3 = Color3.fromRGB(9, 11, 13)
+outputBox.Position = UDim2.new(0.126, 0, 0.421, 0)
+outputBox.Size = UDim2.new(0, 291, 0, 147)
 makeUICorner(outputBox)
+
 
 -- Log button
 local logBtn = Instance.new("TextButton")
@@ -119,7 +456,7 @@ makeUICorner(logBtn, 30)
 -- Credits
 local credits = Instance.new("TextLabel")
 credits.Parent             = frame
-credits.Text               = "Code by yes hello"
+credits.Text               = ""
 credits.Font               = Enum.Font.SourceSans
 credits.TextSize           = 14
 credits.TextColor3         = Color3.fromRGB(255, 255, 255)
@@ -130,76 +467,77 @@ credits.Size               = UDim2.new(1, 0, 0, 25)
 -- Make frame draggable
 local dragging, dragStart, startPos
 frame.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        dragging = true
-        dragStart = input.Position
-        startPos = frame.Position
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then
-                dragging = false
-            end
-        end)
-    end
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		dragging = true
+		dragStart = input.Position
+		startPos = frame.Position
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				dragging = false
+			end
+		end)
+	end
 end)
 frame.InputChanged:Connect(function(input)
-    if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-        local delta = input.Position - dragStart
-        frame.Position = UDim2.new(
-            startPos.X.Scale,
-            startPos.X.Offset + delta.X,
-            startPos.Y.Scale,
-            startPos.Y.Offset + delta.Y
-        )
-    end
+	if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+		local delta = input.Position - dragStart
+		frame.Position = UDim2.new(
+			startPos.X.Scale,
+			startPos.X.Offset + delta.X,
+			startPos.Y.Scale,
+			startPos.Y.Offset + delta.Y
+		)
+	end
 end)
 
 -- Helper: find player by case‑insensitive name
 local function findPlayerByName(name)
-    local lname = name:lower()
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr.Name:lower() == lname then
-            return plr
-        end
-    end
+	local lname = name:lower()
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr.Name:lower() == lname then
+			return plr
+		end
+	end
 end
 
 -- Button logic with correct numeric blacklist filtering
 logBtn.MouseButton1Click:Connect(function()
-    outputBox.Text = ""
-    local name = usernameBox.Text
-    if name == "" then return end
+	outputBox.Text = ""
+	local name = usernameBox.Text
+	if name == "" then return end
 
-    local target = findPlayerByName(name)
-    if not target or not target.Character then
-        outputBox.Text = "Unable to find user"
-        return
-    end
+	local target = findPlayerByName(name)
+	if not target or not target.Character then
+		outputBox.Text = "Unable to find user"
+		return
+	end
 
-    local humanoid = target.Character:FindFirstChildOfClass("Humanoid")
-    local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
-    if not animator then
-        outputBox.Text = "Default Animation(s)"
-        return
-    end
+	local humanoid = target.Character:FindFirstChildOfClass("Humanoid")
+	local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
+	if not animator then
+		outputBox.Text = "Default Animation(s)"
+		return
+	end
 
-    -- Collect and strictly filter out blacklisted IDs
-    local found = {}
-    for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-        if track.Animation then
-            -- extract the numeric ID from "rbxassetid://12345"
-            local idNum = tonumber(track.Animation.AnimationId:match("%d+"))
-            if idNum then
-                if not blacklistSet[idNum] then
-                    table.insert(found, tostring(idNum))
-                end
-                -- otherwise it’s in the blacklist, so skip it entirely
-            end
-        end
-    end
+	-- Collect, filter and dedupe IDs
+	local seen      = {}   -- set of idNum → true
+	local uniqueIds = {}   -- array of strings
 
-    if #found == 0 then
-        outputBox.Text = "Default Animation(s)"
-    else
-        outputBox.Text = table.concat(found, "\n")
-    end
+	for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+		if track.Animation then
+			local idNum = tonumber(track.Animation.AnimationId:match("%d+"))
+			if idNum and                           -- valid number
+				not blacklistSet[idNum] and         -- not blacklisted
+				not seen[idNum] then                -- not already added
+				seen[idNum] = true
+				table.insert(uniqueIds, tostring(idNum))
+			end
+		end
+	end
+
+	if #uniqueIds == 0 then
+		outputBox.Text = "Default Animation(s)"
+	else
+		outputBox.Text = table.concat(uniqueIds, "\n")
+	end
 end)
