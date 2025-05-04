@@ -1,16 +1,16 @@
 -- LocalScript in StarterPlayerScripts
 
-local Players         = game:GetService("Players")
+local Players          = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 
 -- ===== CONFIG =====
--- Animation IDs to filter out (numeric form only, no "rbxassetid://" prefix)
+-- List any animation IDs here (numeric only, no "rbxassetid://" prefix)
 local BLACKLIST = {
     17172918855,   -- example: Adam Idle
     507766666,   -- example: Walk
     -- add more as needed...
 }
--- build a lookup set with numeric keys
+-- Build a lookup set with numeric keys
 local blacklistSet = {}
 for _, id in ipairs(BLACKLIST) do
     blacklistSet[id] = true
@@ -20,22 +20,22 @@ end
 -- Build the GUI
 local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
 local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "AnimationLoggerGUI"
+screenGui.Name   = "AnimationLoggerGUI"
 screenGui.Parent = playerGui
 
 local frame = Instance.new("Frame")
-frame.Name = "MainFrame"
-frame.Parent = screenGui
-frame.Size = UDim2.new(0, 389, 0, 468)
-frame.Position = UDim2.new(0.739, 0, 0.352, 0)
-frame.BackgroundColor3 = Color3.fromRGB(20, 24, 24)
+frame.Name            = "MainFrame"
+frame.Parent          = screenGui
+frame.Size            = UDim2.new(0, 389, 0, 468)
+frame.Position        = UDim2.new(0.739, 0, 0.352, 0)
+frame.BackgroundColor3= Color3.fromRGB(20, 24, 24)
 frame.BorderSizePixel = 0
-frame.Active = true   -- needed for manual dragging
+frame.Active          = true  -- needed for dragging
 
 local function makeUICorner(parent, radius)
     local c = Instance.new("UICorner")
     c.CornerRadius = UDim.new(0, radius or 10)
-    c.Parent = parent
+    c.Parent       = parent
 end
 
 -- Round the main frame
@@ -43,89 +43,89 @@ makeUICorner(frame, 15)
 
 -- Title
 local title = Instance.new("TextLabel")
-title.Parent = frame
-title.Text = "Animation Logger"
-title.Font = Enum.Font.SourceSansBold
-title.TextSize = 37
-title.TextColor3 = Color3.fromRGB(179, 205, 208)
+title.Parent             = frame
+title.Text               = "Animation Logger"
+title.Font               = Enum.Font.SourceSansBold
+title.TextSize           = 37
+title.TextColor3         = Color3.fromRGB(179, 205, 208)
 title.BackgroundTransparency = 1
-title.Size = UDim2.new(1, 0, 0, 50)
-title.Position = UDim2.new(0,0,0.026,0)
+title.Size               = UDim2.new(1, 0, 0, 50)
+title.Position           = UDim2.new(0, 0, 0.026, 0)
 
 -- Username label
 local userLabel = Instance.new("TextLabel")
-userLabel.Parent = frame
-userLabel.Text = "Username"
-userLabel.Font = Enum.Font.SourceSans
-userLabel.TextSize = 25
-userLabel.TextColor3 = Color3.fromRGB(212, 240, 255)
+userLabel.Parent           = frame
+userLabel.Text             = "Username"
+userLabel.Font             = Enum.Font.SourceSans
+userLabel.TextSize         = 25
+userLabel.TextColor3       = Color3.fromRGB(212, 240, 255)
 userLabel.BackgroundTransparency = 1
-userLabel.Position = UDim2.new(0,49,0,70)
-userLabel.Size = UDim2.new(0,291,0,35)
-userLabel.TextXAlignment = Enum.TextXAlignment.Left
+userLabel.Position         = UDim2.new(0, 49, 0, 70)
+userLabel.Size             = UDim2.new(0, 291, 0, 35)
+userLabel.TextXAlignment   = Enum.TextXAlignment.Left
 
 -- Username input
 local usernameBox = Instance.new("TextBox")
-usernameBox.Parent = frame
+usernameBox.Parent          = frame
 usernameBox.PlaceholderText = "Enter player name"
-usernameBox.Text = ""  -- ensure blank at start
-usernameBox.Font = Enum.Font.SourceSansSemibold
-usernameBox.TextSize = 28
-usernameBox.TextColor3 = Color3.fromRGB(198, 239, 255)
-usernameBox.ClearTextOnFocus = false
-usernameBox.BackgroundColor3 = Color3.fromRGB(9, 11, 13)
-usernameBox.Position = UDim2.new(0.126,0,0.223,0)
-usernameBox.Size = UDim2.new(0,291,0,50)
+usernameBox.Text            = ""  -- start blank
+usernameBox.Font            = Enum.Font.SourceSansSemibold
+usernameBox.TextSize        = 28
+usernameBox.TextColor3      = Color3.fromRGB(198, 239, 255)
+usernameBox.ClearTextOnFocus= false
+usernameBox.BackgroundColor3= Color3.fromRGB(9, 11, 13)
+usernameBox.Position        = UDim2.new(0.126, 0, 0.223, 0)
+usernameBox.Size            = UDim2.new(0, 291, 0, 50)
 makeUICorner(usernameBox)
 
 -- Output label
 local outputLabel = Instance.new("TextLabel")
-outputLabel.Parent = frame
-outputLabel.Text = "Output (IDs)"
-outputLabel.Font = Enum.Font.SourceSans
-outputLabel.TextSize = 25
-outputLabel.TextColor3 = Color3.fromRGB(212, 240, 255)
+outputLabel.Parent         = frame
+outputLabel.Text           = "Output (IDs)"
+outputLabel.Font           = Enum.Font.SourceSans
+outputLabel.TextSize       = 25
+outputLabel.TextColor3     = Color3.fromRGB(212, 240, 255)
 outputLabel.BackgroundTransparency = 1
-outputLabel.Position = UDim2.new(0,49,0,162)
-outputLabel.Size = UDim2.new(0,291,0,35)
+outputLabel.Position       = UDim2.new(0, 49, 0, 162)
+outputLabel.Size           = UDim2.new(0, 291, 0, 35)
 outputLabel.TextXAlignment = Enum.TextXAlignment.Left
 
 -- Output box
 local outputBox = Instance.new("TextBox")
-outputBox.Parent = frame
-outputBox.Font = Enum.Font.SourceSansSemibold
-outputBox.TextSize = 28
-outputBox.TextColor3 = Color3.fromRGB(198, 239, 255)
-outputBox.ClearTextOnFocus = false
-outputBox.MultiLine = true
-outputBox.Text = ""
-outputBox.BackgroundColor3 = Color3.fromRGB(9, 11, 13)
-outputBox.Position = UDim2.new(0.126,0,0.421,0)
-outputBox.Size = UDim2.new(0,291,0,147)
+outputBox.Parent          = frame
+outputBox.Font            = Enum.Font.SourceSansSemibold
+outputBox.TextSize        = 28
+outputBox.TextColor3      = Color3.fromRGB(198, 239, 255)
+outputBox.ClearTextOnFocus= false
+outputBox.MultiLine       = true
+outputBox.Text            = ""
+outputBox.BackgroundColor3= Color3.fromRGB(9, 11, 13)
+outputBox.Position        = UDim2.new(0.126, 0, 0.421, 0)
+outputBox.Size            = UDim2.new(0, 291, 0, 147)
 makeUICorner(outputBox)
 
 -- Log button
 local logBtn = Instance.new("TextButton")
-logBtn.Parent = frame
-logBtn.Text = "Log current animations"
-logBtn.Font = Enum.Font.SourceSansBold
-logBtn.TextSize = 27
-logBtn.TextColor3 = Color3.fromRGB(54, 186, 129)
-logBtn.BackgroundColor3 = Color3.fromRGB(0, 8, 7)
-logBtn.Position = UDim2.new(0,49,0,367)
-logBtn.Size = UDim2.new(0,291,0,58)
+logBtn.Parent             = frame
+logBtn.Text               = "Log current animations"
+logBtn.Font               = Enum.Font.SourceSansBold
+logBtn.TextSize           = 27
+logBtn.TextColor3         = Color3.fromRGB(54, 186, 129)
+logBtn.BackgroundColor3   = Color3.fromRGB(0, 8, 7)
+logBtn.Position           = UDim2.new(0, 49, 0, 367)
+logBtn.Size               = UDim2.new(0, 291, 0, 58)
 makeUICorner(logBtn, 30)
 
 -- Credits
 local credits = Instance.new("TextLabel")
-credits.Parent = frame
-credits.Text = "Code by yes hello"
-credits.Font = Enum.Font.SourceSans
-credits.TextSize = 14
-credits.TextColor3 = Color3.fromRGB(255, 255, 255)
+credits.Parent             = frame
+credits.Text               = "Code by yes hello"
+credits.Font               = Enum.Font.SourceSans
+credits.TextSize           = 14
+credits.TextColor3         = Color3.fromRGB(255, 255, 255)
 credits.BackgroundTransparency = 1
-credits.Position = UDim2.new(0,0,1,-25)
-credits.Size = UDim2.new(1,0,0,25)
+credits.Position           = UDim2.new(0, 0, 1, -25)
+credits.Size               = UDim2.new(1, 0, 0, 25)
 
 -- Make frame draggable
 local dragging, dragStart, startPos
@@ -163,7 +163,7 @@ local function findPlayerByName(name)
     end
 end
 
--- Button logic
+-- Button logic with correct numeric blacklist filtering
 logBtn.MouseButton1Click:Connect(function()
     outputBox.Text = ""
     local name = usernameBox.Text
@@ -182,14 +182,17 @@ logBtn.MouseButton1Click:Connect(function()
         return
     end
 
-    -- Collect and filter IDs numerically
+    -- Collect and strictly filter out blacklisted IDs
     local found = {}
     for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-        local assetId = track.Animation and track.Animation.AnimationId
-        if assetId then
-            local idNum = tonumber(assetId:match("%d+"))
-            if idNum and not blacklistSet[idNum] then
-                table.insert(found, tostring(idNum))
+        if track.Animation then
+            -- extract the numeric ID from "rbxassetid://12345"
+            local idNum = tonumber(track.Animation.AnimationId:match("%d+"))
+            if idNum then
+                if not blacklistSet[idNum] then
+                    table.insert(found, tostring(idNum))
+                end
+                -- otherwise it’s in the blacklist, so skip it entirely
             end
         end
     end
