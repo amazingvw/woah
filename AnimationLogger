@@ -65,6 +65,7 @@ userLabel.TextXAlignment = Enum.TextXAlignment.Left
 local usernameBox = Instance.new("TextBox")
 usernameBox.Parent = frame
 usernameBox.Font = Enum.Font.SourceSansSemibold
+UsernameBox.Text = 
 usernameBox.TextSize = 28
 usernameBox.TextColor3 = Color3.fromRGB(198, 239, 255)
 usernameBox.ClearTextOnFocus = false
