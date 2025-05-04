@@ -5,7 +5,9 @@ local Players = game:GetService("Players")
 -- Instances:
 
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Parent = game.StarterGui
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+ScreenGui.Parent = playerGui
 
 local Frame = Instance.new("Frame")
 local AnimationLogger = Instance.new("TextLabel")
