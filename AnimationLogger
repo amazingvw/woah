@@ -7,8 +7,8 @@ local UserInputService = game:GetService("UserInputService")
 -- Put any animation IDs here that you want to filter out.
 -- Use the numeric form (no "rbxassetid://").
 local BLACKLIST = {
-    180436334,   -- example: Adam Idle
-    507766666,   -- example: Walk
+    17172918855,   -- example: Realistic Idle1
+    17173014241,   -- example: Realistic idle2
     -- add more IDs as needed...
 }
 local blacklistSet = {}
@@ -64,7 +64,6 @@ userLabel.TextXAlignment = Enum.TextXAlignment.Left
 -- Username input
 local usernameBox = Instance.new("TextBox")
 usernameBox.Parent = frame
-usernameBox.PlaceholderText = "Enter player name"
 usernameBox.Font = Enum.Font.SourceSansSemibold
 usernameBox.TextSize = 28
 usernameBox.TextColor3 = Color3.fromRGB(198, 239, 255)
