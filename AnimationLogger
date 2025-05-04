@@ -6,9 +6,7 @@ local UserInputService = game:GetService("UserInputService")
 -- ===== CONFIG =====
 -- Animation IDs to filter out (numeric only)
 local BLACKLIST = {
-    180436334,   -- example: Adam Idle
-    507766666,   -- example: Walk
-    -- add more as needed...
+    17172918855,
 }
 local blacklistSet = {}
 for _, id in ipairs(BLACKLIST) do
