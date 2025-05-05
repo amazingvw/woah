@@ -12,12 +12,12 @@ local Config = {
 
 	-- Physics simulation
 	Gravity = workspace.Gravity,
-	CollisionSizeBuffer = 3.5,
+	CollisionSizeBuffer = 5,
 
 	-- Funny swing offsets
 	Swing_Pos_Amplitude = Vector3.new(0.5, 0.5, 0.5),
 	Swing_Pos_Frequency = 1,
-	Swing_Rot_Amplitude = Vector3.new(5, 5, 5),
+	Swing_Rot_Amplitude = Vector3.new(15, 15, 15),
 	Swing_Rot_Frequency = 0.5,
 
 	-- Custom Animations (rbxassetid://...)
@@ -32,7 +32,7 @@ local Config = {
 
 	-- Tilt effect
 	Tilt_Intensity = Vector3.new(-50, 0, -50), -- degrees: X pitch, Y yaw, Z roll
-	Tilt_Lerp = 2,                         -- interpolation speed
+	Tilt_Lerp = 1,                         -- interpolation speed
 }
 
 
@@ -56,7 +56,7 @@ end
 -- Create the Root part
 local root = Instance.new("Part")
 root.Name = "Root"
-root.Size = Vector3.new(2,7,2)
+root.Size = Vector3.new(2,8.5,2)
 root.Anchored = true
 root.CanCollide = false
 root.Position = hrp.Position + Vector3.new(0,2,0)
