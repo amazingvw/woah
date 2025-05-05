@@ -7,7 +7,7 @@ local Config = {
 
 	-- HumanoidRootPart follow spring
 	HRP_Frequency = 8,
-	HRP_Dampening = 0.5,
+	HRP_Dampening = 0.1,
 	HRP_Directional_Lerp = 10,
 
 	-- Physics simulation
@@ -32,7 +32,7 @@ local Config = {
 
 	-- Tilt effect
 	Tilt_Intensity = Vector3.new(-50, 0, -50), -- degrees: X pitch, Y yaw, Z roll
-	Tilt_Lerp = 1,                         -- interpolation speed
+	Tilt_Lerp = 0.1,                         -- interpolation speed
 }
 
 
