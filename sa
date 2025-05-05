@@ -6,9 +6,9 @@ local Config = {
 	RootPart_Speed = 20,
 
 	-- HumanoidRootPart follow spring
-	HRP_Frequency = 4,
+	HRP_Frequency = 8,
 	HRP_Dampening = 0.5,
-	HRP_Directional_Lerp = 9,
+	HRP_Directional_Lerp = 10,
 
 	-- Physics simulation
 	Gravity = workspace.Gravity,
@@ -28,11 +28,11 @@ local Config = {
 		Fall     = "rbxassetid://109212628640",
 	},
 	-- Delay before fall animation (seconds)
-	FallDelay = 0.2,
+	FallDelay = 0.5,
 
 	-- Tilt effect
 	Tilt_Intensity = Vector3.new(-50, 0, -50), -- degrees: X pitch, Y yaw, Z roll
-	Tilt_Lerp = 1,                         -- interpolation speed
+	Tilt_Lerp = 0.1,                         -- interpolation speed
 }
 
 
