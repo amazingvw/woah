@@ -22,17 +22,17 @@ local Config = {
 
 	-- Custom Animations (rbxassetid://...)
 	Animations = {
-		Idle     = "rbxassetid://10921259953",
-		Run      = "rbxassetid://11600211410",
-		Jump     = "rbxassetid://10921263860",
-		Fall     = "rbxassetid://10921262864",
+		Idle     = "rbxassetid://109212599530",
+		Run      = "rbxassetid://116002114100",
+		Jump     = "rbxassetid://109212638600",
+		Fall     = "rbxassetid://109212628640",
 	},
 	-- Delay before fall animation (seconds)
 	FallDelay = 0.2,
 
 	-- Tilt effect
-	Tilt_Intensity = Vector3.new(-15, 0, -15), -- degrees: X pitch, Y yaw, Z roll
-	Tilt_Lerp = 4,                         -- interpolation speed
+	Tilt_Intensity = Vector3.new(-50, 0, -50), -- degrees: X pitch, Y yaw, Z roll
+	Tilt_Lerp = 2,                         -- interpolation speed
 }
 
 
