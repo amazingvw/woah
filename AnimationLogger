@@ -343,6 +343,25 @@ local BLACKLIST = {
 	98854111361360,   -- SwimIdle; From swimidle
 	134591743181628,  -- Swim; From swim
 	87105332133518,   -- StylishPose; From pose	
+	
+	-- Mr. Toilet Animation
+	4417977954,   -- Animation1; From idle
+	4417978624,   -- Animation2; From idle
+	4417979645,   -- Animation; From run
+	4441285342,   -- Animation; From pose
+	
+	-- Ud'zal Animation
+	3303162274,  -- Animation1; From idle
+	3303162549,  -- Animation2; From idle
+	3303162967,  -- walk; From walk
+	3236836670,  -- run; From run
+	3710161342,  -- BorockPose; From pose
+
+	-- Borock the Conqueror / Rthro Heavy Animation
+	3293641938,  -- Animation1; From idle
+	3293642554,  -- Animation2; From idle
+	3236836670,  -- run; From run
+	3710131919,  -- StylishPose; From pose
 }
 -- Build a lookup set with numeric keys
 local blacklistSet = {}
