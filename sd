@@ -114,3 +114,9 @@ end)
 
 print("[CLIENT] Roblox Gemini Chat Integration script loaded. Waiting for your chat messages.")
 print("[CLIENT DEBUG] Script initialization complete.")
+
+-- --- Test Prompt ---
+-- This line will simulate a chat message being sent when the script loads.
+-- Uncomment it to test the Gemini API integration immediately upon running the game.
+-- If you want to use the chat manually, keep this line commented out.
+LocalPlayer.Chatted:Fire("hey can i hear you back")
