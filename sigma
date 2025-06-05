@@ -286,4 +286,3 @@ end)
 -- INITIAL STATE: leave CameraType as Custom so Roblox’s default camera works.
 ----------------------------------------------------------------------
 camera.CameraType = Enum.CameraType.Custom
--- Serviceslocal Players          = game:GetService("Players")local RunService       = game:GetService("RunService")
