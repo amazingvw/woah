@@ -1,0 +1,289 @@
+-- LocalScript: Camera Orientation Override with Angle Wrapping, Lock Delay, and FPS‐Adaptive Spring
+
+-- Services
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
+-- References
+local localPlayer = Players.LocalPlayer
+local camera      = workspace.CurrentCamera
+
+-- State & Connections
+local trackingEnabled   = false
+local scriptKilled      = false
+local bindName          = "CameraOrientOverride"
+local inputConn         = nil
+
+-- Delay before engaging the spring (in seconds)
+local LOCK_DELAY = 0.2
+local delayTimer = 0
+local delaying   = false
+
+-- SPRING BASE SETTINGS (for 60 FPS baseline)
+local INIT_STIFFNESS   =  50
+local INIT_DAMPING     =  10
+local ACTIVE_STIFFNESS = 200
+local ACTIVE_DAMPING   =  30
+local MASS             =   1
+
+-- Velocity threshold (if target is nearly stationary, immediately use “active” spring)
+local VELOCITY_THRESHOLD = 0.1
+
+-- How much we lead the target by its velocity
+local OVERSHOOT_FACTOR = 0.15
+
+-- Switch from “initial” → “active” when under this threshold (in degrees)
+local INIT_THRESHOLD_DEGREES = 1.0
+
+-- Spring‐state for orientation (in DEGREES)
+local rotCurrent    = Vector3.new(0, 0, 0)
+local rotVelocity   = Vector3.new(0, 0, 0)
+local springPhase   = "none"  -- "delaying", "initial", "active", or "none"
+
+----------------------------------------------------------------------
+-- UTILITIES
+----------------------------------------------------------------------
+-- Normalize an angle in degrees to [0, 360)
+local function wrap360(angle)
+    local a = angle % 360
+    if a < 0 then
+        a = a + 360
+    end
+    return a
+end
+
+-- Compute the shortest difference between two angles (in degrees), result ∈ (−180, +180]
+local function shortestAngleDiff(a, b)
+    local diff = (a - b) % 360
+    if diff > 180 then
+        diff = diff - 360
+    end
+    return diff
+end
+
+-- Compute the Euler‐angles (in degrees) needed for the camera to look at `targetPos`
+-- while leaving its position unchanged.
+local function computeOrientationTowards(targetPos)
+    local camPos       = camera.CFrame.Position
+    local lookCFrame   = CFrame.lookAt(camPos, targetPos)
+    local radX, radY, radZ = lookCFrame:ToOrientation()  -- returns radians (X, Y, Z)
+    return Vector3.new(
+        math.deg(radX),
+        math.deg(radY),
+        math.deg(radZ)
+    )
+end
+
+-- Find the nearest OTHER player’s Head (by distance to screen center),
+-- without ignoring off‐screen or behind‐camera heads.
+local function getNearestPlayerHead()
+    local bestPlayer = nil
+    local bestDist   = math.huge
+
+    local vpSize       = camera.ViewportSize
+    local screenCenter = Vector2.new(vpSize.X/2, vpSize.Y/2)
+
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= localPlayer and player.Character and player.Character:FindFirstChild("Head") then
+            local headPart = player.Character.Head
+            local worldPos, onScreen = camera:WorldToViewportPoint(headPart.Position)
+            -- Always compute a 2D projection, even if Z < 0:
+            local screenPos = Vector2.new(worldPos.X, worldPos.Y)
+            local dist      = (screenPos - screenCenter).Magnitude
+            if dist < bestDist then
+                bestDist   = dist
+                bestPlayer = player
+            end
+        end
+    end
+
+    if bestPlayer then
+        local char = bestPlayer.Character
+        if char and char:FindFirstChild("Head") and char:FindFirstChild("HumanoidRootPart") then
+            return char.Head, char.HumanoidRootPart
+        end
+    end
+
+    return nil, nil
+end
+
+----------------------------------------------------------------------
+-- MAIN OVERRIDE LOOP (BindToRenderStep)
+----------------------------------------------------------------------
+local function onOverrideStep(deltaTime)
+    if scriptKilled then
+        return
+    end
+
+    -- If we’re delaying, accumulate time and wait until LOCK_DELAY elapses
+    if springPhase == "delaying" then
+        delayTimer = delayTimer + deltaTime
+        if delayTimer < LOCK_DELAY then
+            return
+        else
+            -- End of delay: initialize spring state
+            -- Capture current camera orientation (in degrees)
+            local radX, radY, radZ = camera.CFrame:ToOrientation()
+            rotCurrent  = Vector3.new(math.deg(radX), math.deg(radY), math.deg(radZ))
+            rotVelocity = Vector3.new(0, 0, 0)
+            springPhase = "initial"
+            -- Reset timer (not strictly needed after)
+            delayTimer = 0
+        end
+    end
+
+    -- Find nearest head & its root part
+    local headPart, rootPart = getNearestPlayerHead()
+    if not headPart or not rootPart then
+        return
+    end
+
+    -- Compute target point (with velocity overshoot)
+    local headPos     = headPart.Position
+    local targetPos   = headPos + (rootPart.Velocity * OVERSHOOT_FACTOR)
+    local desiredOrient = computeOrientationTowards(targetPos)  -- Vector3(deg)
+
+    -- Determine if we should jump to “active” because target is nearly stationary
+    if springPhase == "initial" and rootPart.Velocity.Magnitude < VELOCITY_THRESHOLD then
+        springPhase = "active"
+    end
+
+    -- Choose base spring constants based on phase
+    local baseK, baseC
+    if springPhase == "initial" then
+        baseK, baseC = INIT_STIFFNESS, INIT_DAMPING
+    else
+        baseK, baseC = ACTIVE_STIFFNESS, ACTIVE_DAMPING
+    end
+
+    -- To keep behavior consistent across framerates, scale K and C by (1/60)/dt
+    -- So at 120 FPS (dt≈1/120), scaleFactor ≈ (1/60)/(1/120) = 2 → doubles K and C
+    local scaleFactor = (1/60) / deltaTime
+    local k = baseK * scaleFactor
+    local c = baseC * scaleFactor
+
+    -- Compute displacement with angle wrapping (shortest path)
+    local dx = shortestAngleDiff(rotCurrent.X, desiredOrient.X)
+    local dy = shortestAngleDiff(rotCurrent.Y, desiredOrient.Y)
+    local dz = shortestAngleDiff(rotCurrent.Z, desiredOrient.Z)
+    local displacement = Vector3.new(dx, dy, dz)
+
+    -- If still in “initial” and within threshold, switch to “active”
+    if springPhase == "initial" and displacement.Magnitude < INIT_THRESHOLD_DEGREES then
+        springPhase = "active"
+        -- Recompute k, c for active
+        baseK, baseC = ACTIVE_STIFFNESS, ACTIVE_DAMPING
+        k = baseK * scaleFactor
+        c = baseC * scaleFactor
+    end
+
+    -- Spring‐damper: F = –k·x – c·v
+    local springForce  = -k * displacement
+    local dampingForce = -c * rotVelocity
+    local acceleration = (springForce + dampingForce) / MASS
+
+    -- Integrate (in DEGREES)
+    rotVelocity = rotVelocity + (acceleration * deltaTime)
+    rotCurrent  = rotCurrent  + (rotVelocity * deltaTime)
+
+    -- Wrap rotCurrent back into [0,360) in case it drifts far
+    rotCurrent = Vector3.new(
+        wrap360(rotCurrent.X),
+        wrap360(rotCurrent.Y),
+        wrap360(rotCurrent.Z)
+    )
+
+    -- Reconstruct a CFrame that keeps camera’s position but applies the new rotation
+    local camPos     = camera.CFrame.Position
+    local rotRadians = Vector3.new(
+        math.rad(rotCurrent.X),
+        math.rad(rotCurrent.Y),
+        math.rad(rotCurrent.Z)
+    )
+    local newCFrame = CFrame.new(camPos) * CFrame.fromOrientation(rotRadians.X, rotRadians.Y, rotRadians.Z)
+
+    -- Override only the camera’s CFrame
+    camera.CFrame = newCFrame
+end
+
+----------------------------------------------------------------------
+-- FUNCTIONS TO TOGGLE + KILL
+----------------------------------------------------------------------
+-- Start tracking: enter “delaying” phase, reset timer, bind override step
+local function startTracking()
+    trackingEnabled = true
+    springPhase     = "delaying"
+    delayTimer      = 0
+
+    -- Bind after Roblox’s default camera update (RenderPriority.Last)
+    RunService:BindToRenderStep(bindName, Enum.RenderPriority.Last.Value, onOverrideStep)
+end
+
+-- Stop tracking: unbind override and reset spring state
+local function stopTracking()
+    trackingEnabled = false
+    RunService:UnbindFromRenderStep(bindName)
+
+    -- Clear spring state
+    rotCurrent  = Vector3.new(0, 0, 0)
+    rotVelocity = Vector3.new(0, 0, 0)
+    springPhase = "none"
+    delayTimer  = 0
+end
+
+-- Toggle on/off (bound to “R”)
+local function toggleTracking()
+    if scriptKilled then
+        return
+    end
+
+    if not trackingEnabled then
+        startTracking()
+    else
+        stopTracking()
+    end
+end
+
+-- Kill the script entirely (bound to “T”)
+local function killScript()
+    if scriptKilled then
+        return
+    end
+    scriptKilled = true
+
+    -- Unbind override if active
+    RunService:UnbindFromRenderStep(bindName)
+
+    -- Disconnect input listener
+    if inputConn then
+        inputConn:Disconnect()
+        inputConn = nil
+    end
+
+    -- Finally, destroy the script so it can’t run again
+    script:Destroy()
+end
+
+----------------------------------------------------------------------
+-- INPUT LISTENER
+----------------------------------------------------------------------
+inputConn = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed or scriptKilled then
+        return
+    end
+
+    if input.UserInputType == Enum.UserInputType.Keyboard then
+        if input.KeyCode == Enum.KeyCode.R then
+            toggleTracking()
+        elseif input.KeyCode == Enum.KeyCode.T then
+            killScript()
+        end
+    end
+end)
+
+----------------------------------------------------------------------
+-- INITIAL STATE: leave CameraType as Custom so Roblox’s default camera works.
+----------------------------------------------------------------------
+camera.CameraType = Enum.CameraType.Custom
+-- Serviceslocal Players          = game:GetService("Players")local RunService       = game:GetService("RunService")
