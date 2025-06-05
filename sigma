@@ -21,10 +21,10 @@ local delayTimer = 0
 local delaying   = false
 
 -- SPRING BASE SETTINGS (for 60 FPS baseline)
-local INIT_STIFFNESS   =  50
-local INIT_DAMPING     =  10
-local ACTIVE_STIFFNESS = 200
-local ACTIVE_DAMPING   =  30
+local INIT_STIFFNESS   =  300
+local INIT_DAMPING     =  20
+local ACTIVE_STIFFNESS = 300
+local ACTIVE_DAMPING   =  10
 local MASS             =   1
 
 -- Velocity threshold (if target is nearly stationary, immediately use “active” spring)
