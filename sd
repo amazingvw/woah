@@ -1,0 +1,98 @@
+-- Services
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer -- Get the local player
+
+-- Configuration
+local GEMINI_API_KEY = "AIzaSyArylzrHtCo2Pxhy1gP0jZhNzwgHe0hTFg" -- <<< REPLACE THIS with your actual Gemini API key
+-- Choose your desired Gemini model: 'gemini-pro' or 'gemini-2.0-flash' are common choices.
+local GEMINI_MODEL = "gemini-2.5-flash" 
+
+-- Construct the full API URL including your key
+local GEMINI_API_URL = string.format("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", GEMINI_MODEL, GEMINI_API_KEY)
+
+-- Ensure HTTP requests are enabled in your game settings (if applicable, for this specific environment).
+-- For standard Roblox, this is usually a server-side setting, but for your custom client, ensure its allowed.
+
+-- Function to send message directly to Gemini API from the client
+local function getGeminiResponseDirect(playerMessage)
+    local success, response = pcall(function()
+        -- Prepare the headers for the POST request
+        local headers = {
+            ["Content-Type"] = "application/json"
+        }
+
+        -- Prepare the body of the request as a JSON string
+        -- This structure is required by the Gemini API for text input
+        local body = HttpService:JSONEncode({
+            contents = {
+                {
+                    parts = {
+                        {
+                            text = playerMessage
+                        }
+                    }
+                }
+            }
+        })
+
+        print(string.format("[CLIENT] Attempting to send message to Gemini API: %s", GEMINI_API_URL))
+        print(string.format("[CLIENT] Request body: %s", body))
+
+        -- Make the HTTP POST request directly to the Gemini API
+        local rawResponse = HttpService:RequestAsync({
+            Url = GEMINI_API_URL,
+            Method = "POST",
+            Headers = headers,
+            Body = body
+        })
+
+        -- Check if the request was successful
+        if rawResponse.Success then
+            -- Decode the JSON response from Gemini
+            local decodedResponse = HttpService:JSONDecode(rawResponse.Body)
+
+            -- Attempt to extract the generated text from the response
+            -- The structure can vary, so robust navigation is key.
+            if decodedResponse.candidates and #decodedResponse.candidates > 0 and
+               decodedResponse.candidates[1].content and
+               decodedResponse.candidates[1].content.parts and
+               #decodedResponse.candidates[1].content.parts > 0 and
+               decodedResponse.candidates[1].content.parts[1].text then
+                return decodedResponse.candidates[1].content.parts[1].text
+            else
+                -- Log the full body if the expected path isn't found, for debugging
+                warn("[CLIENT] Gemini response did not contain expected text content structure:", rawResponse.Body)
+                return "Error: Gemini response structure unexpected."
+            end
+        else
+            -- Log error details if the HTTP request itself failed
+            warn(string.format("[CLIENT] HTTP Request Failed: %s, Status: %s, Body: %s", rawResponse.StatusMessage, rawResponse.StatusCode, rawResponse.Body))
+            return "Error: Could not get response from Gemini directly."
+        end
+    end)
+
+    if not success then
+        -- Log if the pcall failed due to a script error
+        warn(string.format("[CLIENT] An error occurred during direct HTTP request to Gemini: %s", response))
+        return "Error: An internal script error occurred."
+    end
+end
+
+-- Listen for the local player's chat messages
+LocalPlayer.Chatted:Connect(function(message)
+    -- Ignore empty messages or commands (e.g., messages starting with '/')
+    if string.len(message) == 0 or string.sub(message, 1, 1) == "/" then
+        return
+    end
+
+    print(string.format("[CLIENT Chat Input] You: %s", message))
+
+    -- Call the Gemini API directly from the client
+    local geminiResponse = getGeminiResponseDirect(message)
+
+    -- Print the response to the local client console (Developer Console F9)
+    print(string.format("[CLIENT Gemini Output]: %s", geminiResponse))
+end)
+
+print("[CLIENT] Roblox Gemini Chat Integration script loaded. Waiting for your chat messages.")
