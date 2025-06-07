@@ -1,235 +1,145 @@
--- LocalScript placed in StarterPlayerScripts (client-side only)
+--[[─────────────────── CONFIG ───────────────────]]
 
--- Services
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local Workspace = game:GetService("Workspace")
-
-local player = Players.LocalPlayer
-local camera = Workspace.CurrentCamera
-
--- Table to track which movement keys are pressed
-local movementState = {
-	W = false,
-	A = false,
-	S = false,
-	D = false,
-	Jumping = false,
+local Config = {
+    targetUserId = nil,                        -- number or nil: morph into this user’s avatar
+    rigType      = Enum.HumanoidRigType.R15,   -- Enum.HumanoidRigType.R15 or .R6
+    cloneOffset  = Vector3.new(0, 5, 0),       -- CFrame offset for the dummy’s spawn
 }
 
--- Store references to the original character before we override
-local originalCharacter = player.Character
-local originalHumanoid, originalHRP
+local Players              = game:GetService("Players")
+local StarterPlayer        = game:GetService("StarterPlayer")
+local ContextActionService = game:GetService("ContextActionService")
 
-if originalCharacter then
-	originalHumanoid = originalCharacter:FindFirstChildOfClass("Humanoid")
-	originalHRP = originalCharacter:FindFirstChild("HumanoidRootPart")
+local player            = Players.LocalPlayer
+local originalCharacter = player.Character or player.CharacterAdded:Wait()
+local debugDummy        = workspace:FindFirstChild("DebugDummy")  -- reuse if already in workspace
+local controllingDummy  = false
+local lastCameraCFrame  = nil
+
+-- Helper: re-run every LocalScript in StarterCharacterScripts on the target model
+local function runStarterCharacterScripts(target)
+    for _, script in ipairs(StarterPlayer.StarterCharacterScripts:GetChildren()) do
+        if script:IsA("LocalScript") then
+            script:Clone().Parent = target
+        end
+    end
 end
 
--- Create a new Model to hold our debug dummy
-local debugDummy = Instance.new("Model")
-debugDummy.Name = "DebugDummy"
-debugDummy.Parent = Workspace
+-- When your real character respawns, update refs but keep dummy around
+player.CharacterAdded:Connect(function(char)
+    if char.Name ~= "DebugDummy" then
+        originalCharacter = char
+        controllingDummy  = false
+        -- If you were toggled into the dummy, re-apply that after respawn
+        if debugDummy and debugDummy.Parent and controllingDummy then
+            player.Character = debugDummy
+            workspace.CurrentCamera.CameraSubject = debugDummy:WaitForChild("Humanoid")
+        end
+    end
+end)
 
--- Helper function to create Parts
-local function makePart(name, size, cframe, transparency, canCollide, parent)
-	local part = Instance.new("Part")
-	part.Name = name
-	part.Size = size
-	part.CFrame = cframe
-	part.Transparency = transparency
-	part.CanCollide = canCollide
-	part.Anchored = false
-	part.TopSurface = Enum.SurfaceType.Smooth
-	part.BottomSurface = Enum.SurfaceType.Smooth
-	part.Parent = parent
-	return part
+-- Utility: recursively mark everything archivable
+local function setArchivableRecursive(inst)
+    inst.Archivable = true
+    for _, c in ipairs(inst:GetChildren()) do
+        setArchivableRecursive(c)
+    end
 end
 
--- 1) Create HumanoidRootPart (invisible, used as PrimaryPart & camera pivot)
-local hrpSize = Vector3.new(2, 2, 1)
-local hrpCFrame = CFrame.new(0, 5, 0)  -- Initial position for debug dummy
-local debugHRP = makePart("HumanoidRootPart", hrpSize, hrpCFrame, 1, true, debugDummy)
+-- Build or clone the DebugDummy
+local function cloneCharacter(orig)
+    local model
 
--- 2) Create Torso (visible, same size and position as HRP)
-local debugTorso = makePart("Torso", hrpSize, hrpCFrame, 0, true, debugDummy)
+    if Config.targetUserId then
+        -- Morph into another user’s avatar
+        local desc = Players:GetHumanoidDescriptionFromUserId(Config.targetUserId)
+        model = Players:CreateHumanoidModelFromDescription(desc, Config.rigType)
+    else
+        -- Exact copy of your current character
+        setArchivableRecursive(orig)
+        model = orig:Clone()
+    end
 
--- 3) Create Head (positioned 1.5 studs above HRP, with a Mesh)
-local headSize = Vector3.new(2, 1, 1)
-local headCFrame = hrpCFrame * CFrame.new(0, 1.5, 0)
-local debugHead = makePart("Head", headSize, headCFrame, 0, true, debugDummy)
-local headMesh = Instance.new("SpecialMesh")
-headMesh.MeshType = Enum.MeshType.Head
-headMesh.Scale = Vector3.new(1.25, 1.25, 1.25)
-headMesh.Parent = debugHead
+    model.Name = "DebugDummy"
 
--- 4) Create Right Arm (offset -1.5 studs on X from HRP, size 1,2,1, no collisions)
-local rightArmSize = Vector3.new(1, 2, 1)
-local rightArmCFrame = hrpCFrame * CFrame.new(-1.5, 0, 0)
-local debugRightArm = makePart("Right Arm", rightArmSize, rightArmCFrame, 0, false, debugDummy)
+    -- Position it with your offset
+    local hrp = model:FindFirstChild("HumanoidRootPart")
+    if hrp and orig:FindFirstChild("HumanoidRootPart") then
+        hrp.CFrame = orig.HumanoidRootPart.CFrame * CFrame.new(Config.cloneOffset)
+    end
 
--- 5) Create Left Arm (offset +1.5 studs on X from HRP, size 1,2,1, no collisions)
-local leftArmSize = Vector3.new(1, 2, 1)
-local leftArmCFrame = hrpCFrame * CFrame.new(1.5, 0, 0)
-local debugLeftArm = makePart("Left Arm", leftArmSize, leftArmCFrame, 0, false, debugDummy)
+    -- Show your display name on the dummy
+    local hum = model:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum.DisplayName = player.DisplayName
+    end
 
--- 6) Create Right Leg (offset +0.5 X, -2 Y from HRP, size 1,2,1, no collisions)
-local rightLegSize = Vector3.new(1, 2, 1)
-local rightLegCFrame = hrpCFrame * CFrame.new(0.5, -2, 0)
-local debugRightLeg = makePart("Right Leg", rightLegSize, rightLegCFrame, 0, false, debugDummy)
+    model.Parent = workspace
 
--- 7) Create Left Leg (offset -0.5 X, -2 Y from HRP, size 1,2,1, no collisions)
-local leftLegSize = Vector3.new(1, 2, 1)
-local leftLegCFrame = hrpCFrame * CFrame.new(-0.5, -2, 0)
-local debugLeftLeg = makePart("Left Leg", leftLegSize, leftLegCFrame, 0, false, debugDummy)
+    -- ▶ Re-execute all StarterCharacterScripts on the dummy:
+    runStarterCharacterScripts(model)
 
--- 8) Add a Humanoid to the DebugDummy Model
-local debugHumanoid = Instance.new("Humanoid")
-debugHumanoid.Parent = debugDummy
-debugHumanoid.RigType = Enum.HumanoidRigType.R6
+    -- ▶ Handle dummy death:
+    local respawnDelay = Players.RespawnTime or 5
+    if hum then
+        hum.Died:Connect(function()
+            if controllingDummy then
+                -- switch you back to real character
+                player.Character = originalCharacter
+                workspace.CurrentCamera.CameraSubject = originalCharacter:WaitForChild("Humanoid")
+                controllingDummy = false
+            end
+            -- after respawnDelay seconds, cleanup so next Y makes a new one
+            task.delay(respawnDelay, function()
+                if debugDummy and debugDummy.Parent then
+                    debugDummy:Destroy()
+                end
+                debugDummy = nil
+            end)
+        end)
+    end
 
--- 9) Weld (Motor6D) all DebugDummy body parts together for R6
-local function weldParts(part0, part1)
-	local m = Instance.new("Motor6D")
-	m.Part0 = part0
-	m.Part1 = part1
-	m.C0 = part0.CFrame:Inverse() * part1.CFrame
-	m.C1 = CFrame.new()
-	m.Parent = part0
-	return m
+    return model
 end
 
-weldParts(debugHRP, debugTorso).Name = "RootJoint"
-weldParts(debugTorso, debugHead).Name = "Neck"
-weldParts(debugTorso, debugRightArm).Name = "Right Shoulder"
-weldParts(debugTorso, debugLeftArm).Name = "Left Shoulder"
-weldParts(debugTorso, debugRightLeg).Name = "Right Hip"
-weldParts(debugTorso, debugLeftLeg).Name = "Left Hip"
+-- Reset Animate so animations replay cleanly
+local function resetAnimate(character)
+    local ani = character:FindFirstChild("Animate")
+    if ani and ani:IsA("LocalScript") then
+        ani.Disabled = true
+        ani.Disabled = false
+    end
+end
 
--- 10) Set the PrimaryPart of the DebugDummy to its HumanoidRootPart
-debugDummy.PrimaryPart = debugHRP
+-- Swap camera + player.Character + animation reset
+local function switchTo(character)
+    player.Character = character
+    workspace.CurrentCamera.CameraSubject = character:WaitForChild("Humanoid")
+    if lastCameraCFrame then
+        workspace.CurrentCamera.CFrame = lastCameraCFrame
+    end
+    resetAnimate(character)
+end
 
--- 11) By default, control the DebugDummy
-local controlledModel = debugDummy
-local controlledHumanoid = debugHumanoid
-local controlledHRP = debugHRP
+-- Y-key handler: create dummy once per life, then toggle
+local function onToggle(_, state)
+    if state ~= Enum.UserInputState.Begin then return end
 
--- 12) Ensure camera follows the DebugDummy initially
-camera.CameraSubject = controlledHumanoid
-camera.CameraType = Enum.CameraType.Custom
+    -- remember camera position/orientation
+    lastCameraCFrame = workspace.CurrentCamera.CFrame
 
--- 13) Do NOT override player.Character yet; we'll switch when toggling
+    -- create dummy once per life
+    if not debugDummy then
+        debugDummy = cloneCharacter(originalCharacter)
+    end
 
--- 14) Input Handling for Movement, Jumping, and Toggle
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-	if gameProcessed then return end
-	if input.UserInputType == Enum.UserInputType.Keyboard then
-		local key = input.KeyCode
-		if key == Enum.KeyCode.W then
-			movementState.W = true
-		elseif key == Enum.KeyCode.A then
-			movementState.A = true
-		elseif key == Enum.KeyCode.S then
-			movementState.S = true
-		elseif key == Enum.KeyCode.D then
-			movementState.D = true
-		elseif key == Enum.KeyCode.Space then
-			movementState.Jumping = true
-		elseif key == Enum.KeyCode.T then
-			-- Toggle control between originalCharacter and debugDummy
-			if controlledModel == debugDummy then
-				-- Switch to original (if available)
-				if originalCharacter and originalHumanoid and originalHRP then
-					controlledModel = originalCharacter
-					controlledHumanoid = originalHumanoid
-					controlledHRP = originalHRP
-					player.Character = originalCharacter
-					camera.CameraSubject = originalHumanoid
-				end
-			else
-				-- Switch to debugDummy
-				controlledModel = debugDummy
-				controlledHumanoid = debugHumanoid
-				controlledHRP = debugHRP
-				player.Character = debugDummy
-				camera.CameraSubject = debugHumanoid
-			end
-		end
-	end
-end)
+    if controllingDummy then
+        switchTo(originalCharacter)
+    else
+        switchTo(debugDummy)
+    end
 
-UserInputService.InputEnded:Connect(function(input, gameProcessed)
-	if gameProcessed then return end
-	if input.UserInputType == Enum.UserInputType.Keyboard then
-		local key = input.KeyCode
-		if key == Enum.KeyCode.W then
-			movementState.W = false
-		elseif key == Enum.KeyCode.A then
-			movementState.A = false
-		elseif key == Enum.KeyCode.S then
-			movementState.S = false
-		elseif key == Enum.KeyCode.D then
-			movementState.D = false
-		elseif key == Enum.KeyCode.Space then
-			movementState.Jumping = false
-		end
-	end
-end)
+    controllingDummy = not controllingDummy
+end
 
--- 15) Movement, Jump & Smooth Turning Logic per Frame
-RunService.RenderStepped:Connect(function(dt)
-	-- Determine direction relative to camera
-	local camCFrame = camera.CFrame
-	local forward = Vector3.new(camCFrame.LookVector.X, 0, camCFrame.LookVector.Z).Unit
-	local right = Vector3.new(camCFrame.RightVector.X, 0, camCFrame.RightVector.Z).Unit
-
-	local moveDir = Vector3.new()
-
-	if movementState.W then
-		moveDir += forward
-	end
-	if movementState.S then
-		moveDir -= forward
-	end
-	if movementState.A then
-		moveDir -= right
-	end
-	if movementState.D then
-		moveDir += right
-	end
-
-	-- Normalize (prevents faster diagonal speed)
-	if moveDir.Magnitude > 0 then
-		moveDir = moveDir.Unit
-	end
-
-	-- Handle Jumping: if space is held, keep applying Jump = true
-	if movementState.Jumping and controlledHumanoid then
-		controlledHumanoid.Jump = true
-	end
-
-	-- Tell the controlled Humanoid to move in that direction (relative to camera)
-	if controlledHumanoid then
-		controlledHumanoid:Move(moveDir, false)
-	end
-
-	-- Smooth Turning for the controlled model
-	if moveDir.Magnitude > 0 and controlledHRP and controlledHumanoid then
-		local currentPos = controlledHRP.Position
-		local targetCFrame = CFrame.new(currentPos, currentPos + Vector3.new(moveDir.X, 0, moveDir.Z))
-
-		-- Determine if airborne by checking FloorMaterial on the controlled humanoid
-		local isAirborne = controlledHumanoid.FloorMaterial == Enum.Material.Air
-		local turnSpeed = isAirborne and 2.5 or 5
-
-		-- Interpolation alpha based on dt and speed
-		local alpha = math.clamp(dt * turnSpeed, 0, 1)
-		controlledHRP.CFrame = controlledHRP.CFrame:Lerp(targetCFrame, alpha)
-	end
-end)
-
--- Now:
--- • Pressing T will toggle control between the original character (if it exists) and the DebugDummy.
--- • The toggle only changes which Humanoid receives Move and Jump input and which model the camera follows.
--- • Transparency and collisions of both models remain unchanged during toggles.
+ContextActionService:BindAction("ToggleDebugDummy", onToggle, false, Enum.KeyCode.Y)
