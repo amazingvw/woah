@@ -1,9 +1,4 @@
---[[─────────────────── CONFIG ───────────────────]]
 
-local Config = {
-	targetUserId = 1,                        -- number or nil: morph into this user’s avatar
-	rigType      = Enum.HumanoidRigType.R15,   -- Enum.HumanoidRigType.R15 or .R6
-	cloneOffset  = Vector3.new(0, 5, 0),       -- CFrame offset for the dummy’s spawn
 }
 
 local Players              = game:GetService("Players")
@@ -16,125 +11,130 @@ local debugDummy        = workspace:FindFirstChild("DebugDummy")  -- reuse if al
 local controllingDummy  = false
 local lastCameraCFrame  = nil
 
--- When your real character respawns, just update the reference.
+-- Helper: re-run every LocalScript in StarterCharacterScripts on the target model
+local function runStarterCharacterScripts(target)
+    for _, script in ipairs(StarterPlayer.StarterCharacterScripts:GetChildren()) do
+        if script:IsA("LocalScript") then
+            script:Clone().Parent = target
+        end
+    end
+end
+
+-- When your real character respawns, update refs but keep dummy around
 player.CharacterAdded:Connect(function(char)
-	if char.Name ~= "DebugDummy" then
-		originalCharacter = char
-		controllingDummy  = false
-		-- restore camera if you were in dummy
-		if controllingDummy and debugDummy then
-			player.Character = debugDummy
-			workspace.CurrentCamera.CameraSubject = debugDummy:WaitForChild("Humanoid")
-		end
-	end
+    if char.Name ~= "DebugDummy" then
+        originalCharacter = char
+        controllingDummy  = false
+        -- If you were toggled into the dummy, re-apply that after respawn
+        if debugDummy and debugDummy.Parent and controllingDummy then
+            player.Character = debugDummy
+            workspace.CurrentCamera.CameraSubject = debugDummy:WaitForChild("Humanoid")
+        end
+    end
 end)
 
--- Utility: make every child archivable so :Clone() captures everything
+-- Utility: recursively mark everything archivable
 local function setArchivableRecursive(inst)
-	inst.Archivable = true
-	for _, c in ipairs(inst:GetChildren()) do
-		setArchivableRecursive(c)
-	end
+    inst.Archivable = true
+    for _, c in ipairs(inst:GetChildren()) do
+        setArchivableRecursive(c)
+    end
 end
 
 -- Build or clone the DebugDummy
 local function cloneCharacter(orig)
-	local model
+    local model
 
-	if Config.targetUserId then
-		-- Morph into another user’s avatar
-		local desc = Players:GetHumanoidDescriptionFromUserId(Config.targetUserId)
-		model = Players:CreateHumanoidModelFromDescription(desc, Config.rigType)  -- :contentReference[oaicite:2]{index=2}
-	else
-		-- Exact copy of your current character
-		setArchivableRecursive(orig)
-		model = orig:Clone()
-	end
+    if Config.targetUserId then
+        -- Morph into another user’s avatar
+        local desc = Players:GetHumanoidDescriptionFromUserId(Config.targetUserId)
+        model = Players:CreateHumanoidModelFromDescription(desc, Config.rigType)
+    else
+        -- Exact copy of your current character
+        setArchivableRecursive(orig)
+        model = orig:Clone()
+    end
 
-	model.Name = "DebugDummy"
+    model.Name = "DebugDummy"
 
-	-- Position it with your offset
-	local hrp = model:FindFirstChild("HumanoidRootPart")
-	if hrp and orig:FindFirstChild("HumanoidRootPart") then
-		hrp.CFrame = orig.HumanoidRootPart.CFrame * CFrame.new(Config.cloneOffset)
-	end
+    -- Position it with your offset
+    local hrp = model:FindFirstChild("HumanoidRootPart")
+    if hrp and orig:FindFirstChild("HumanoidRootPart") then
+        hrp.CFrame = orig.HumanoidRootPart.CFrame * CFrame.new(Config.cloneOffset)
+    end
 
-	-- Show your display name on the dummy
-	local hum = model:FindFirstChildOfClass("Humanoid")
-	if hum then
-		hum.DisplayName = player.DisplayName
-	end
+    -- Show your display name on the dummy
+    local hum = model:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum.DisplayName = player.DisplayName
+    end
 
-	model.Parent = workspace
+    model.Parent = workspace
 
-	-- When dummy itself dies: switch you back, then wipe after RespawnTime
-	if hum then
-		hum.Died:Connect(function()
-			if controllingDummy then
-				-- switch camera & control back
-				player.Character = originalCharacter
-				workspace.CurrentCamera.CameraSubject = originalCharacter:WaitForChild("Humanoid")
-				controllingDummy = false
-			end
-			-- queue removal after the client respawn delay
-			local delaySec = Players.RespawnTime or 5  -- :contentReference[oaicite:3]{index=3}
-			task.delay(delaySec, function()
-				if debugDummy and debugDummy.Parent then
-					debugDummy:Destroy()
-				end
-				debugDummy = nil
-			end)
-		end)
-	end
+    -- ▶ Re-execute all StarterCharacterScripts on the dummy:
+    runStarterCharacterScripts(model)
 
-	return model
+    -- ▶ Handle dummy death:
+    local respawnDelay = Players.RespawnTime or 5
+    if hum then
+        hum.Died:Connect(function()
+            if controllingDummy then
+                -- switch you back to real character
+                player.Character = originalCharacter
+                workspace.CurrentCamera.CameraSubject = originalCharacter:WaitForChild("Humanoid")
+                controllingDummy = false
+            end
+            -- after respawnDelay seconds, cleanup so next Y makes a new one
+            task.delay(respawnDelay, function()
+                if debugDummy and debugDummy.Parent then
+                    debugDummy:Destroy()
+                end
+                debugDummy = nil
+            end)
+        end)
+    end
+
+    return model
 end
 
--- Rerun any LocalScripts from StarterCharacterScripts
-local function runStarterCharacterScripts(target)
-	for _, scr in ipairs(StarterPlayer.StarterCharacterScripts:GetChildren()) do
-		if scr:IsA("LocalScript") then
-			scr:Clone().Parent = target
-		end
-	end
-end
-
--- Force the Animate script to reload so animations play fresh
+-- Reset Animate so animations replay cleanly
 local function resetAnimate(character)
-	local ani = character:FindFirstChild("Animate")
-	if ani and ani:IsA("LocalScript") then
-		ani.Disabled = true
-		ani.Disabled = false
-	end
+    local ani = character:FindFirstChild("Animate")
+    if ani and ani:IsA("LocalScript") then
+        ani.Disabled = true
+        ani.Disabled = false
+    end
 end
 
--- Swap `player.Character`, camera subject, restore camera CFrame, reload animations
+-- Swap camera + player.Character + animation reset
 local function switchTo(character)
-	player.Character = character
-	workspace.CurrentCamera.CameraSubject = character:WaitForChild("Humanoid")
-	if lastCameraCFrame then
-		workspace.CurrentCamera.CFrame = lastCameraCFrame
-	end
-	resetAnimate(character)
+    player.Character = character
+    workspace.CurrentCamera.CameraSubject = character:WaitForChild("Humanoid")
+    if lastCameraCFrame then
+        workspace.CurrentCamera.CFrame = lastCameraCFrame
+    end
+    resetAnimate(character)
 end
 
--- Y‐key handler: spawn or reuse the dummy, then toggle control/camera
-local function toggleControl(_, state)
-	if state ~= Enum.UserInputState.Begin then return end
+-- Y-key handler: create dummy once per life, then toggle
+local function onToggle(_, state)
+    if state ~= Enum.UserInputState.Begin then return end
 
-	lastCameraCFrame = workspace.CurrentCamera.CFrame
+    -- remember camera position/orientation
+    lastCameraCFrame = workspace.CurrentCamera.CFrame
 
-	if not debugDummy then
-		debugDummy = cloneCharacter(originalCharacter)
-		runStarterCharacterScripts(debugDummy)
-	end
+    -- create dummy once per life
+    if not debugDummy then
+        debugDummy = cloneCharacter(originalCharacter)
+    end
 
-	if controllingDummy then
-		switchTo(originalCharacter)
-	else
-		switchTo(debugDummy)
-	end
-	controllingDummy = not controllingDummy
+    if controllingDummy then
+        switchTo(originalCharacter)
+    else
+        switchTo(debugDummy)
+    end
+
+    controllingDummy = not controllingDummy
 end
 
-ContextActionService:BindAction("ToggleDebugDummy", toggleControl, false, Enum.KeyCode.Y)
+ContextActionService:BindAction("ToggleDebugDummy", onToggle, false, Enum.KeyCode.Y)
