@@ -1,7 +1,7 @@
--- [[─────────────────── CONFIG ───────────────────]]
+--[[─────────────────── CONFIG ───────────────────]]
 
 local Config = {
-	targetUserId = 4209693937,                        -- number or nil: morph into this user’s avatar
+	targetUserId = 1,                        -- number or nil: morph into this user’s avatar
 	rigType      = Enum.HumanoidRigType.R15,   -- Enum.HumanoidRigType.R15 or .R6
 	cloneOffset  = Vector3.new(0, 5, 0),       -- CFrame offset for the dummy’s spawn
 }
