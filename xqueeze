@@ -1,4 +1,4 @@
---[[─────────────────── CONFIG ───────────────────]]
+-- [[─────────────────── CONFIG ───────────────────]]
 
 local Config = {
 	targetUserId = 4209693937,                        -- number or nil: morph into this user’s avatar
