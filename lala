@@ -5,9 +5,6 @@ local MAX_SPEED         = 22.7
 local COIN_BUFFER       = 1
 local MAX_COIN_DISTANCE = 400
 
-local VISUAL_LIMIT      = 60
-local NONVISUAL_LIMIT   = 0
-
 local STEER_SPRING  = 45
 local STEER_DAMP    = 1
 local ROT_SPRING    = 700
@@ -18,184 +15,120 @@ local ROT_DAMP      = 10
 -----------------------------------
 local Players            = game:GetService("Players")
 local RunService         = game:GetService("RunService")
-local UserInputService   = game:GetService("UserInputService")
 local player             = Players.LocalPlayer
-
------------------------------------
--- STATE
------------------------------------
-local killOnLimit = true
-local collectedWithVisual = 0
-local collectedWithoutVisual = 0
-
------------------------------------
--- TOGGLE KEYBIND (P)
------------------------------------
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-	if gameProcessed then return end
-	if input.KeyCode == Enum.KeyCode.P then
-		killOnLimit = not killOnLimit
-		if killOnLimit then
-			warn("Will kill on hitting both limits")
-		else
-			warn("Will reset counters on hitting both limits")
-		end
-	end
-end)
 
 -----------------------------------
 -- COIN VALIDATION
 -----------------------------------
 local function isCoinValid(coinPart)
-	if not coinPart:IsA("BasePart") or coinPart.Name ~= "Coin_Server" then
-		return false
-	end
-	-- look for any BasePart child with transparency <= 0.1
-	for _, part in ipairs(coinPart:GetDescendants()) do
-		if part:IsA("BasePart") and part.Transparency <= 0.1 then
-			return true
-		end
-	end
-	return false
+    -- Must be the server coin part
+    if not coinPart:IsA("BasePart") or coinPart.Name ~= "Coin_Server" then
+        return false
+    end
+    local vis = coinPart:FindFirstChild("CoinVisual")
+    -- Must have CoinVisual and be visible
+    return vis and vis:IsA("BasePart") and vis.Transparency <= 0.1
 end
 
 local function getClosestCoin(hrp)
-	local closest, shortestDist = nil, math.huge
-	for _, desc in ipairs(workspace:GetDescendants()) do
-		if desc:IsA("BasePart") and desc.Name == "Coin_Server" then
-			if isCoinValid(desc) then
-				local dist = (hrp.Position - desc.Position).Magnitude
-				if dist < shortestDist and dist <= MAX_COIN_DISTANCE then
-					shortestDist = dist
-					closest = desc
-				end
-			end
-		end
-	end
-	return closest
+    local closest, shortestDist = nil, math.huge
+    for _, desc in ipairs(workspace:GetDescendants()) do
+        if desc:IsA("BasePart") and desc.Name == "Coin_Server" and isCoinValid(desc) then
+            local dist = (hrp.Position - desc.Position).Magnitude
+            if dist < shortestDist and dist <= MAX_COIN_DISTANCE then
+                shortestDist = dist
+                closest = desc
+            end
+        end
+    end
+    return closest
 end
 
 -----------------------------------
 -- MOVEMENT & COLLECTION
 -----------------------------------
 local function moveContinuously(char)
-	local hrp = char:WaitForChild("HumanoidRootPart")
-	local dirVel, rotVel = Vector3.zero, Vector3.zero
-	local forward = hrp.CFrame.LookVector
-	local targetCoin
+    local hrp = char:WaitForChild("HumanoidRootPart")
+    local dirVel, rotVel = Vector3.zero, Vector3.zero
+    local forward = hrp.CFrame.LookVector
+    local targetCoin
 
-	while char.Parent do
-		local dt = RunService.Heartbeat:Wait()
+    while char.Parent do
+        local dt = RunService.Heartbeat:Wait()
 
-		-- pick a new target if needed
-		if not targetCoin 
-		   or not targetCoin:IsDescendantOf(workspace) 
-		   or not isCoinValid(targetCoin) then
-			targetCoin = getClosestCoin(hrp)
-		end
+        -- pick or re-pick target
+        if not targetCoin
+           or not targetCoin:IsDescendantOf(workspace)
+           or not isCoinValid(targetCoin) then
+            targetCoin = getClosestCoin(hrp)
+        end
 
-		if targetCoin then
-			local dist = (hrp.Position - targetCoin.Position).Magnitude
-			local radius = targetCoin.Size.Magnitude/2 + COIN_BUFFER
+        if targetCoin then
+            local dist = (hrp.Position - targetCoin.Position).Magnitude
+            local radius = targetCoin.Size.Magnitude/2 + COIN_BUFFER
 
-			if dist <= radius then
-				-- **COLLECT**
-				-- decide which counter to increment
-				if targetCoin:FindFirstChild("CoinVisual") then
-					collectedWithVisual += 1
-				else
-					collectedWithoutVisual += 1
-				end
+            if dist <= radius then
+                -- **COLLECT**: fade out
+                for _, p in ipairs(targetCoin:GetDescendants()) do
+                    if p:IsA("BasePart") then
+                        p.Transparency = 0.5
+                        p.CanCollide = false
+                    end
+                end
+                targetCoin = nil
+            else
+                -- steering spring
+                local desired = (targetCoin.Position - hrp.Position).Unit
+                local dVel = desired - forward
+                local steerAccel = dVel * STEER_SPRING
+                dirVel = (dirVel + steerAccel * dt) * math.exp(-STEER_DAMP * dt)
+                forward = (forward + dirVel * dt).Unit
 
-				-- fade all parts inside
-				for _, p in ipairs(targetCoin:GetDescendants()) do
-					if p:IsA("BasePart") then
-						p.Transparency = 0.5
-						p.CanCollide = false
-					end
-				end
+                -- rotation spring
+                local dLook = forward - hrp.CFrame.LookVector
+                local aLook = dLook * ROT_SPRING
+                rotVel = (rotVel + aLook * dt) * math.exp(-ROT_DAMP * dt)
+                local lookDir = (hrp.CFrame.LookVector + rotVel * dt).Unit
 
-				-- check limits
-				if collectedWithVisual >= VISUAL_LIMIT 
-				   and collectedWithoutVisual >= NONVISUAL_LIMIT then
-					if killOnLimit then
-						local hum = char:FindFirstChildWhichIsA("Humanoid")
-						if hum then hum.Health = 0 end
-					else
-						collectedWithVisual = 0
-						collectedWithoutVisual = 0
-					end
-				end
-
-				targetCoin = nil
-			else
-				-- steering spring
-				local desired = (targetCoin.Position - hrp.Position).Unit
-				local dVel = desired - forward
-				local steerAccel = dVel * STEER_SPRING
-				dirVel = (dirVel + steerAccel * dt) * math.exp(-STEER_DAMP * dt)
-				forward = (forward + dirVel * dt).Unit
-
-				-- rotation spring
-				local dLook = forward - hrp.CFrame.LookVector
-				local aLook = dLook * ROT_SPRING
-				rotVel = (rotVel + aLook * dt) * math.exp(-ROT_DAMP * dt)
-				local lookDir = (hrp.CFrame.LookVector + rotVel * dt).Unit
-
-				-- move
-				local newPos = hrp.Position + forward * MAX_SPEED * dt
-				hrp.CFrame = CFrame.new(newPos, newPos + lookDir)
-			end
-		end
-	end
+                -- move character
+                local newPos = hrp.Position + forward * MAX_SPEED * dt
+                hrp.CFrame = CFrame.new(newPos, newPos + lookDir)
+            end
+        end
+    end
 end
 
 -----------------------------------
--- NOCLIP & GRAVITY
+-- NOCLIP
 -----------------------------------
-local NoclipConn, ClipState
-
-local function noclip()
-	ClipState = false
-	NoclipConn = RunService.Stepped:Connect(function()
-		if not ClipState and player.Character then
-			for _, v in ipairs(player.Character:GetDescendants()) do
-				if v:IsA("BasePart") then
-					v.CanCollide = false
-				end
-			end
-		end
-	end)
-end
-
-local function clip()
-	if NoclipConn then NoclipConn:Disconnect() end
-	ClipState = true
-end
-
-noclip()
+local NoclipConn
+NoclipConn = RunService.Stepped:Connect(function()
+    if player.Character then
+        for _, v in ipairs(player.Character:GetDescendants()) do
+            if v:IsA("BasePart") then
+                v.CanCollide = false
+            end
+        end
+    end
+end)
 
 -----------------------------------
 -- CHARACTER INIT + RESPAWN
 -----------------------------------
 local function onCharacterAdded(char)
-	local humanoid = char:WaitForChild("Humanoid")
-	char:WaitForChild("HumanoidRootPart")
+    local humanoid = char:WaitForChild("Humanoid")
+    char:WaitForChild("HumanoidRootPart")
 
-	workspace.Gravity = 0
-	humanoid.PlatformStand = true
+    workspace.Gravity = 0
+    humanoid.PlatformStand = true
 
-	-- reset counters
-	collectedWithVisual   = 0
-	collectedWithoutVisual = 0
-
-	-- start movement loop
-	task.defer(function()
-		moveContinuously(char)
-	end)
+    -- start movement loop
+    task.defer(function()
+        moveContinuously(char)
+    end)
 end
 
 if player.Character then
-	onCharacterAdded(player.Character)
+    onCharacterAdded(player.Character)
 end
 player.CharacterAdded:Connect(onCharacterAdded)
