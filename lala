@@ -21,81 +21,74 @@ local player             = Players.LocalPlayer
 -- COIN VALIDATION
 -----------------------------------
 local function isCoinValid(coinPart)
-    -- Must be the server coin part
-    if not coinPart:IsA("BasePart") or coinPart.Name ~= "Coin_Server" then
-        return false
-    end
-    local vis = coinPart:FindFirstChild("CoinVisual")
-    -- Must have CoinVisual and be visible
-    return vis and vis:IsA("BasePart") and vis.Transparency <= 0.1
+	if not coinPart:IsA("BasePart") or coinPart.Name ~= "Coin_Server" then
+		return false
+	end
+	local vis = coinPart:FindFirstChild("CoinVisual")
+	return vis and vis:IsA("BasePart") and vis.Transparency <= 0.1
 end
 
 local function getClosestCoin(hrp)
-    local closest, shortestDist = nil, math.huge
-    for _, desc in ipairs(workspace:GetDescendants()) do
-        if desc:IsA("BasePart") and desc.Name == "Coin_Server" and isCoinValid(desc) then
-            local dist = (hrp.Position - desc.Position).Magnitude
-            if dist < shortestDist and dist <= MAX_COIN_DISTANCE then
-                shortestDist = dist
-                closest = desc
-            end
-        end
-    end
-    return closest
+	local closest, shortestDist = nil, math.huge
+	for _, desc in ipairs(workspace:GetDescendants()) do
+		if desc:IsA("BasePart") and desc.Name == "Coin_Server" and isCoinValid(desc) then
+			local dist = (hrp.Position - desc.Position).Magnitude
+			if dist < shortestDist and dist <= MAX_COIN_DISTANCE then
+				shortestDist = dist
+				closest = desc
+			end
+		end
+	end
+	return closest
 end
 
 -----------------------------------
 -- MOVEMENT & COLLECTION
 -----------------------------------
 local function moveContinuously(char)
-    local hrp = char:WaitForChild("HumanoidRootPart")
-    local dirVel, rotVel = Vector3.zero, Vector3.zero
-    local forward = hrp.CFrame.LookVector
-    local targetCoin
+	local hrp = char:WaitForChild("HumanoidRootPart")
+	local dirVel, rotVel = Vector3.zero, Vector3.zero
+	local forward = hrp.CFrame.LookVector
+	local targetCoin
 
-    while char.Parent do
-        local dt = RunService.Heartbeat:Wait()
+	while char.Parent do
+		local dt = RunService.Heartbeat:Wait()
 
-        -- pick or re-pick target
-        if not targetCoin
-           or not targetCoin:IsDescendantOf(workspace)
-           or not isCoinValid(targetCoin) then
-            targetCoin = getClosestCoin(hrp)
-        end
+		if not targetCoin
+			or not targetCoin:IsDescendantOf(workspace)
+			or not isCoinValid(targetCoin) then
+			targetCoin = getClosestCoin(hrp)
+		end
 
-        if targetCoin then
-            local dist = (hrp.Position - targetCoin.Position).Magnitude
-            local radius = targetCoin.Size.Magnitude/2 + COIN_BUFFER
+		if targetCoin then
+			local dist = (hrp.Position - targetCoin.Position).Magnitude
+			local radius = targetCoin.Size.Magnitude / 2 + COIN_BUFFER
 
-            if dist <= radius then
-                -- **COLLECT**: fade out
-                for _, p in ipairs(targetCoin:GetDescendants()) do
-                    if p:IsA("BasePart") then
-                        p.Transparency = 0.5
-                        p.CanCollide = false
-                    end
-                end
-                targetCoin = nil
-            else
-                -- steering spring
-                local desired = (targetCoin.Position - hrp.Position).Unit
-                local dVel = desired - forward
-                local steerAccel = dVel * STEER_SPRING
-                dirVel = (dirVel + steerAccel * dt) * math.exp(-STEER_DAMP * dt)
-                forward = (forward + dirVel * dt).Unit
+			if dist <= radius then
+				for _, p in ipairs(targetCoin:GetDescendants()) do
+					if p:IsA("BasePart") then
+						p.Transparency = 0.5
+						p.CanCollide = false
+					end
+				end
+				targetCoin = nil
+			else
+				local desired = (targetCoin.Position - hrp.Position).Unit
+				local dVel = desired - forward
+				local steerAccel = dVel * STEER_SPRING
+				dirVel = (dirVel + steerAccel * dt) * math.exp(-STEER_DAMP * dt)
+				forward = (forward + dirVel * dt).Unit
 
-                -- rotation spring
-                local dLook = forward - hrp.CFrame.LookVector
-                local aLook = dLook * ROT_SPRING
-                rotVel = (rotVel + aLook * dt) * math.exp(-ROT_DAMP * dt)
-                local lookDir = (hrp.CFrame.LookVector + rotVel * dt).Unit
+				local dLook = forward - hrp.CFrame.LookVector
+				local aLook = dLook * ROT_SPRING
+				rotVel = (rotVel + aLook * dt) * math.exp(-ROT_DAMP * dt)
+				local lookDir = (hrp.CFrame.LookVector + rotVel * dt).Unit
 
-                -- move character
-                local newPos = hrp.Position + forward * MAX_SPEED * dt
-                hrp.CFrame = CFrame.new(newPos, newPos + lookDir)
-            end
-        end
-    end
+				local newPos = hrp.Position + forward * MAX_SPEED * dt
+				hrp.CFrame = CFrame.new(newPos, newPos + lookDir)
+			end
+		end
+	end
 end
 
 -----------------------------------
@@ -103,32 +96,67 @@ end
 -----------------------------------
 local NoclipConn
 NoclipConn = RunService.Stepped:Connect(function()
-    if player.Character then
-        for _, v in ipairs(player.Character:GetDescendants()) do
-            if v:IsA("BasePart") then
-                v.CanCollide = false
-            end
-        end
-    end
+	if player.Character then
+		for _, v in ipairs(player.Character:GetDescendants()) do
+			if v:IsA("BasePart") then
+				v.CanCollide = false
+			end
+		end
+	end
 end)
 
 -----------------------------------
 -- CHARACTER INIT + RESPAWN
 -----------------------------------
 local function onCharacterAdded(char)
-    local humanoid = char:WaitForChild("Humanoid")
-    char:WaitForChild("HumanoidRootPart")
+	local humanoid = char:WaitForChild("Humanoid")
+	local hrp = char:WaitForChild("HumanoidRootPart")
 
-    workspace.Gravity = 0
-    humanoid.PlatformStand = true
+	workspace.Gravity = 0
+	humanoid.PlatformStand = true
 
-    -- start movement loop
-    task.defer(function()
-        moveContinuously(char)
-    end)
+	-- Zero velocity after 0.5s
+	task.delay(0.5, function()
+		if hrp and hrp:IsDescendantOf(workspace) then
+			hrp.AssemblyLinearVelocity = Vector3.zero
+			hrp.AssemblyAngularVelocity = Vector3.zero
+		end
+	end)
+
+	-- Coin count listener
+	local function getHumanoid()
+		return char:FindFirstChildOfClass("Humanoid")
+	end
+
+	local coinsTextLabel = player:WaitForChild("PlayerGui")
+		:WaitForChild("MainGUI")
+		:WaitForChild("Game")
+		:WaitForChild("CoinBags")
+		:WaitForChild("Container")
+		:WaitForChild("BeachBall")
+		:WaitForChild("CurrencyFrame")
+		:WaitForChild("Icon")
+		:WaitForChild("Coins")
+
+	local function onTextChanged()
+		if tonumber(coinsTextLabel.Text) == 40 then
+			local hum = getHumanoid()
+			if hum then
+				hum.Health = 0
+			end
+		end
+	end
+
+	coinsTextLabel:GetPropertyChangedSignal("Text"):Connect(onTextChanged)
+	onTextChanged()
+
+	-- Begin movement logic
+	task.defer(function()
+		moveContinuously(char)
+	end)
 end
 
 if player.Character then
-    onCharacterAdded(player.Character)
+	onCharacterAdded(player.Character)
 end
 player.CharacterAdded:Connect(onCharacterAdded)
