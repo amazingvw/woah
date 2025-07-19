@@ -160,3 +160,82 @@ if player.Character then
 	onCharacterAdded(player.Character)
 end
 player.CharacterAdded:Connect(onCharacterAdded)
+
+-- LocalScript in StarterPlayer → StarterPlayerScripts
+
+local Players    = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local player    = Players.LocalPlayer
+local ws        = workspace
+local terrain   = ws:FindFirstChildOfClass("Terrain")
+
+-- Recognize map-models by any of these children
+local function isMapModel(m)
+    if not m:IsA("Model") then return false end
+    return m:FindFirstChild("Base")
+        or m:FindFirstChild("CoinContainer")
+        or m:FindFirstChild("CoinAreas")
+end
+
+-- Inside a map-model: delete _all_ children except these two
+local function cleanMapModel(m)
+    for _, c in ipairs(m:GetChildren()) do
+        if c.Name ~= "CoinContainer" and c.Name ~= "CoinAreas" then
+            c:Destroy()
+        end
+    end
+end
+
+-- Full sweep of top-level Workspace
+local function sweepWorkspace()
+    for _, obj in ipairs(ws:GetChildren()) do
+        if obj == player.Character then
+            -- keep your avatar
+        elseif terrain and obj == terrain then
+            -- keep Terrain
+        elseif obj:IsA("Camera") then
+            -- keep the camera if parented here
+        elseif isMapModel(obj) then
+            -- map → only clean inside
+            cleanMapModel(obj)
+        else
+            obj:Destroy()
+        end
+    end
+end
+
+-- Handle anything new appearing in Workspace
+local function onChildAdded(obj)
+    -- let sub‑children replicate
+    RunService.Heartbeat:Wait()
+
+    if obj == player.Character then
+        return
+    elseif terrain and obj == terrain then
+        return
+    elseif obj:IsA("Camera") then
+        return
+    elseif isMapModel(obj) then
+        cleanMapModel(obj)
+    else
+        obj:Destroy()
+    end
+end
+
+-- Hook it all up
+
+-- 1) run a sweep on each respawn
+player.CharacterAdded:Connect(function(char)
+    -- wait until character core parts exist
+    char:WaitForChild("HumanoidRootPart", 5)
+    sweepWorkspace()
+end)
+
+-- 2) catch _any_ new Model/Part/etc in real time
+ws.ChildAdded:Connect(onChildAdded)
+
+-- 3) if you’re already spawned (Play Solo), do an initial sweep
+if player.Character then
+    sweepWorkspace()
+end
