@@ -1,116 +1,243 @@
+-----------------------------------
 -- CONFIGURATION
-local MAX_SPEED         = 22.7       -- studs per second
+-----------------------------------
+local MAX_SPEED         = 22.7
 local COIN_BUFFER       = 1
 local MAX_COIN_DISTANCE = 400
+local COIN_SIZE_OVERRIDE = Vector3.new(5, 5, 5)
+local COIN_OFFSET_Y     = -2.5
 
--- SERVER COIN CUSTOMIZATION
-local SERVER_COIN_SIZE    = Vector3.new(5, 5, 5)    -- custom size for Server coin
-local COINVISUAL_OFFSET   = Vector3.new(0, -2.5, 0) -- offset below the visual center
-
+-----------------------------------
 -- SERVICES
-local Players     = game:GetService("Players")
-local RunService  = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
+-----------------------------------
+local TweenService       = game:GetService("TweenService")
+local Players            = game:GetService("Players")
+local RunService         = game:GetService("RunService")
+local player             = Players.LocalPlayer
 
-local player = Players.LocalPlayer
-
+-----------------------------------
 -- COIN VALIDATION
+-----------------------------------
 local function isCoinValid(coinPart)
-    if not coinPart:IsA("BasePart") or coinPart.Name ~= "Coin_Server" then
-        return false
-    end
-    local vis = coinPart:FindFirstChild("CoinVisual")
-    return vis and vis:IsA("BasePart") and vis.Transparency <= 0.1
+	if not coinPart:IsA("BasePart") or coinPart.Name ~= "Coin_Server" then
+		return false
+	end
+	local vis = coinPart:FindFirstChild("CoinVisual")
+	return vis and vis:IsA("BasePart") and vis.Transparency <= 0.1
 end
 
 local function getClosestCoin(hrp)
-    local closest, shortest = nil, math.huge
-    for _, desc in ipairs(workspace:GetDescendants()) do
-        if desc:IsA("BasePart") and desc.Name == "Coin_Server" and isCoinValid(desc) then
-            local dist = (hrp.Position - desc.Position).Magnitude
-            if dist < shortest and dist <= MAX_COIN_DISTANCE then
-                shortest = dist
-                closest = desc
-            end
-        end
-    end
-    return closest
+	local closest, shortestDist = nil, math.huge
+	for _, desc in ipairs(workspace:GetDescendants()) do
+		if desc:IsA("BasePart") and desc.Name == "Coin_Server" and isCoinValid(desc) then
+			local dist = (hrp.Position - desc.Position).Magnitude
+			if dist < shortestDist and dist <= MAX_COIN_DISTANCE then
+				shortestDist = dist
+				closest = desc
+			end
+		end
+	end
+	return closest
 end
 
--- MOVEMENT & COLLECTION
-local function moveToTarget(hrp, targetPos)
-    local distance = (hrp.Position - targetPos).Magnitude
-    local travelTime = distance / MAX_SPEED
-    local tweenInfo = TweenInfo.new(travelTime, Enum.EasingStyle.Linear)
-    local goal = {Position = targetPos}
-    local tween = TweenService:Create(hrp, tweenInfo, goal)
-    tween:Play()
-    tween.Completed:Wait()
-end
-
+-----------------------------------
+-- MOVEMENT & COLLECTION (Tween)
+-----------------------------------
 local function moveContinuously(char)
-    local hrp = char:WaitForChild("HumanoidRootPart")
-    while char.Parent do
-        -- find new target if needed
-        local coin = getClosestCoin(hrp)
-        if coin then
-            -- apply custom size
-            coin.Size = SERVER_COIN_SIZE
-            local vis = coin:FindFirstChild("CoinVisual")
-            if vis then
-                -- compute target below visual
-                local targetPos = (vis.Position + COINVISUAL_OFFSET)
-                -- move via tween
-                moveToTarget(hrp, targetPos)
+	local hrp = char:WaitForChild("HumanoidRootPart")
+	local modelPrimary = char.PrimaryPart or hrp
+	char.PrimaryPart = modelPrimary
 
-                -- upon arrival, disable coin
-                if (hrp.Position - targetPos).Magnitude <= COIN_BUFFER then
-                    for _, p in ipairs(coin:GetDescendants()) do
-                        if p:IsA("BasePart") then
-                            p.Transparency = 0.5
-                            p.CanCollide = false
-                        end
-                    end
-                end
-            end
-        else
-            -- wait a bit if no coin
-            RunService.Heartbeat:Wait()
-        end
-    end
+	local currentTween
+	local targetCoin
+
+	-- Rotate laid down
+	local function applyRotation()
+		char:SetPrimaryPartCFrame(CFrame.new(modelPrimary.Position) * CFrame.Angles(math.rad(90), 0, 0))
+	end
+	applyRotation()
+
+	task.spawn(function()
+		while char.Parent do
+			applyRotation()
+			task.wait(1)
+		end
+	end)
+
+	while char.Parent do
+		RunService.Heartbeat:Wait()
+
+		if not targetCoin
+			or not targetCoin:IsDescendantOf(workspace)
+			or not isCoinValid(targetCoin) then
+			targetCoin = getClosestCoin(hrp)
+
+			-- cancel any tween in progress
+			if currentTween then
+				currentTween:Cancel()
+			end
+
+			if targetCoin then
+				local vis = targetCoin:FindFirstChild("CoinVisual")
+				if vis then
+					targetCoin.Size = COIN_SIZE_OVERRIDE
+					local targetPos = vis.Position + Vector3.new(0, COIN_OFFSET_Y, 0)
+					local distance = (modelPrimary.Position - targetPos).Magnitude
+					local travelTime = distance / MAX_SPEED
+
+					local tweenInfo = TweenInfo.new(travelTime, Enum.EasingStyle.Linear)
+					currentTween = TweenService:Create(char, tweenInfo, {
+						PrimaryPartCFrame = CFrame.new(targetPos, targetPos + Vector3.new(0, 0, -1))
+					})
+					currentTween:Play()
+				end
+			end
+		end
+
+		if targetCoin then
+			local vis = targetCoin:FindFirstChild("CoinVisual")
+			local targetPos = vis and (vis.Position + Vector3.new(0, COIN_OFFSET_Y, 0))
+			if targetPos and (modelPrimary.Position - targetPos).Magnitude <= (targetCoin.Size.Magnitude / 2 + COIN_BUFFER) then
+				for _, p in ipairs(targetCoin:GetDescendants()) do
+					if p:IsA("BasePart") then
+						p.Transparency = 0.5
+						p.CanCollide = false
+					end
+				end
+				targetCoin = nil
+			end
+		end
+	end
 end
 
+-----------------------------------
 -- NOCLIP
+-----------------------------------
 RunService.Stepped:Connect(function()
-    if player.Character then
-        for _, v in ipairs(player.Character:GetDescendants()) do
-            if v:IsA("BasePart") then v.CanCollide = false end
-        end
-    end
+	if player.Character then
+		for _, v in ipairs(player.Character:GetDescendants()) do
+			if v:IsA("BasePart") then
+				v.CanCollide = false
+			end
+		end
+	end
 end)
 
+-----------------------------------
 -- CHARACTER INIT + RESPAWN
+-----------------------------------
 local function onCharacterAdded(char)
-    local humanoid = char:WaitForChild("Humanoid")
-    local hrp = char:WaitForChild("HumanoidRootPart")
+	local humanoid = char:WaitForChild("Humanoid")
+	local hrp = char:WaitForChild("HumanoidRootPart")
 
-    workspace.Gravity = 0
-    humanoid.PlatformStand = true
+	workspace.Gravity = 0
+	humanoid.PlatformStand = true
 
-    -- lay character flat after 0.5s
-    task.delay(0.5, function()
-        if hrp and hrp:IsDescendantOf(workspace) then
-            hrp.CFrame = CFrame.new(hrp.Position) * CFrame.Angles(math.rad(90), 0, 0)
-            -- zero out existing velocity
-            hrp.AssemblyLinearVelocity = Vector3.zero
-            hrp.AssemblyAngularVelocity = Vector3.zero
-        end
-    end)
+	task.delay(0.5, function()
+		if hrp and hrp:IsDescendantOf(workspace) then
+			hrp.AssemblyLinearVelocity = Vector3.zero
+			hrp.AssemblyAngularVelocity = Vector3.zero
+		end
+	end)
 
-    -- start movement loop
-    task.defer(function() moveContinuously(char) end)
+	-- Coin counter kill check
+	local coinsTextLabel = player:WaitForChild("PlayerGui")
+		:WaitForChild("MainGUI")
+		:WaitForChild("Game")
+		:WaitForChild("CoinBags")
+		:WaitForChild("Container")
+		:WaitForChild("BeachBall")
+		:WaitForChild("CurrencyFrame")
+		:WaitForChild("Icon")
+		:WaitForChild("Coins")
+
+	local function getHumanoid()
+		return char:FindFirstChildOfClass("Humanoid")
+	end
+
+	local function onTextChanged()
+		if tonumber(coinsTextLabel.Text) == 40 then
+			local hum = getHumanoid()
+			if hum then
+				hum.Health = 0
+			end
+		end
+	end
+
+	coinsTextLabel:GetPropertyChangedSignal("Text"):Connect(onTextChanged)
+	onTextChanged()
+
+	task.defer(function()
+		moveContinuously(char)
+	end)
 end
 
--- hookup
-if player.Character then onCharacterAdded(player.Character) end
+if player.Character then
+	onCharacterAdded(player.Character)
+end
 player.CharacterAdded:Connect(onCharacterAdded)
+
+-----------------------------------
+-- MAP CLEANING & WORKSPACE SWEEP
+-----------------------------------
+local ws = workspace
+local terrain = ws:FindFirstChildOfClass("Terrain")
+
+local function isMapModel(m)
+	return m:IsA("Model") and (
+		m:FindFirstChild("Base") or
+		m:FindFirstChild("CoinContainer") or
+		m:FindFirstChild("CoinAreas")
+	)
+end
+
+local function cleanMapModel(m)
+	for _, c in ipairs(m:GetChildren()) do
+		if c.Name ~= "CoinContainer" and c.Name ~= "CoinAreas" then
+			c:Destroy()
+		end
+	end
+end
+
+local function sweepWorkspace()
+	for _, obj in ipairs(ws:GetChildren()) do
+		if obj == player.Character then
+			-- Keep player
+		elseif terrain and obj == terrain then
+			-- Keep terrain
+		elseif obj:IsA("Camera") then
+			-- Keep camera
+		elseif isMapModel(obj) then
+			cleanMapModel(obj)
+		else
+			obj:Destroy()
+		end
+	end
+end
+
+local function onChildAdded(obj)
+	RunService.Heartbeat:Wait()
+
+	if obj == player.Character then
+		return
+	elseif terrain and obj == terrain then
+		return
+	elseif obj:IsA("Camera") then
+		return
+	elseif isMapModel(obj) then
+		cleanMapModel(obj)
+	else
+		obj:Destroy()
+	end
+end
+
+player.CharacterAdded:Connect(function(char)
+	char:WaitForChild("HumanoidRootPart", 5)
+	sweepWorkspace()
+end)
+
+ws.ChildAdded:Connect(onChildAdded)
+
+if player.Character then
+	sweepWorkspace()
+end
