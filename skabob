@@ -69,16 +69,15 @@ local function moveContinuously(char)
 			if vis then
 				local targetPos = Vector3.new(vis.Position.X, vis.Position.Y + COIN_VISUAL_OFFSET.Y, vis.Position.Z)
 				local dist = (hrp.Position - targetPos).Magnitude
-				local radius = targetCoin.Size.Magnitude / 2 + COIN_BUFFER
+                                if dist <= 0.5 then
+                                    for _, p in ipairs(targetCoin:GetDescendants()) do
+                                        if p:IsA("BasePart") then
+                                            p.Transparency = 0.5
+                                            p.CanCollide = false
+                                        end
+                                    end
+                                    targetCoin = nil
 
-				if dist <= radius then
-					for _, p in ipairs(targetCoin:GetDescendants()) do
-						if p:IsA("BasePart") then
-							p.Transparency = 0.5
-							p.CanCollide = false
-						end
-					end
-					targetCoin = nil
 				else
 					local direction = (targetPos - hrp.Position).Unit
 					local newPos = hrp.Position + direction * MAX_SPEED * dt
