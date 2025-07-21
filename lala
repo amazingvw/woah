@@ -1,7 +1,7 @@
 -----------------------------------
 -- CONFIGURATION
 -----------------------------------
-local MAX_SPEED         = 22.7
+local MAX_SPEED         = 22.6
 local COIN_BUFFER       = 1
 local MAX_COIN_DISTANCE = 400
 
