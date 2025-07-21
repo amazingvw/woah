@@ -67,7 +67,7 @@ local function moveContinuously(char)
 		if targetCoin then
 			local vis = targetCoin:FindFirstChild("CoinVisual")
 			if vis then
-				local targetPos = vis.Position + COIN_VISUAL_OFFSET
+				local targetPos = Vector3.new(vis.Position.X, vis.Position.Y + COIN_VISUAL_OFFSET.Y, vis.Position.Z)
 				local dist = (hrp.Position - targetPos).Magnitude
 				local radius = targetCoin.Size.Magnitude / 2 + COIN_BUFFER
 
