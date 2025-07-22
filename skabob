@@ -125,6 +125,7 @@ local function onCharacterAdded(char)
 			local pivot = char:GetPivot()
 			char:PivotTo(CFrame.new(pivot.Position - Vector3.new(0, 10, 0)))
 			-- Zero out motion
+                        wait(0.1)
 			hrp.AssemblyLinearVelocity = Vector3.zero
 			hrp.AssemblyAngularVelocity = Vector3.zero
 		end
