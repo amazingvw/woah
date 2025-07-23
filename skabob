@@ -252,80 +252,128 @@ end)
 
 
 
+-- >> StarterPlayerScripts/BagTracker.lua << --
+
 local Players = game:GetService("Players")
-local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
+local localPlayer = Players.LocalPlayer
 
--- Path to the external Coins TextLabel
-local function getCoinsLabel()
-	return playerGui:WaitForChild("MainGUI")
-		:WaitForChild("Game")
-		:WaitForChild("CoinBags")
-		:WaitForChild("Container")
-		:WaitForChild("BeachBall")
-		:WaitForChild("CurrencyFrame")
-		:WaitForChild("Icon")
-		:WaitForChild("Coins")
-end
-
--- GUI Elements
-local statsGui = playerGui:WaitForChild("StatsGUI")
-local statsLabel = statsGui:WaitForChild("StatsLabel")
-
--- Stat Tracking
-local bagMax = 40
-local currentCoins = 0
+-- ─── VARIABLES ────────────────────────────────────────────────────────────────
+local MAX_BAG = 40
+local prevCoins = 0
 local totalCoins = 0
 local successfulResets = 0
 local deaths = 0
 
--- Update the GUI text
-local function updateStatsLabel()
-	statsLabel.Text = string.format(
-		"Bag: %d/%d\nSuccessful Resets: %d\nDeaths: %d\nTotal Coins: %d",
-		currentCoins, bagMax, successfulResets, deaths, totalCoins
-	)
+-- ─── GUI SETUP ─────────────────────────────────────────────────────────────────
+local function buildGui()
+    -- parent a ScreenGui under PlayerGui (once)
+    local playerGui = localPlayer:WaitForChild("PlayerGui")
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "BagTracker"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = playerGui
+
+    -- frame
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 200, 0, 100)
+    frame.Position = UDim2.new(0, 10, 0, 10)
+    frame.BackgroundTransparency = 0.5
+    frame.BackgroundColor3 = Color3.new(0,0,0)
+    frame.Parent = screenGui
+
+    -- helper to create a label
+    local function makeLabel(name, posY)
+        local lbl = Instance.new("TextLabel")
+        lbl.Name = name
+        lbl.Size = UDim2.new(1, -10, 0, 20)
+        lbl.Position = UDim2.new(0, 5, 0, posY)
+        lbl.BackgroundTransparency = 1
+        lbl.TextColor3 = Color3.new(1,1,1)
+        lbl.Font = Enum.Font.SourceSans
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.Text = name .. ": 0"
+        lbl.Parent = frame
+        return lbl
+    end
+
+    local bagLabel   = makeLabel("Bag",          0)
+    local resetLabel = makeLabel("SuccessfulResets", 20)
+    local deathLabel = makeLabel("Deaths",       40)
+    local totalLabel = makeLabel("TotalCoins",   60)
+
+    -- updater function
+    local function updateGui(currentBag)
+        bagLabel.Text   = ("Bag: %d/%d"):format(currentBag, MAX_BAG)
+        resetLabel.Text = "Successful Resets: " .. successfulResets
+        deathLabel.Text = "Deaths: "            .. deaths
+        totalLabel.Text = "Total Coins: "       .. totalCoins
+    end
+
+    return updateGui
 end
 
--- Handle coin change
-local function onCoinsChanged()
-	local coinsLabel = getCoinsLabel()
-	local newCoins = tonumber(coinsLabel.Text)
-	if newCoins then
-		if newCoins > currentCoins then
-			totalCoins += (newCoins - currentCoins)
-		end
+-- ─── TRACKING LOGIC ────────────────────────────────────────────────────────────
+local updateGui = buildGui()
 
-		if newCoins >= bagMax and currentCoins < bagMax then
-			successfulResets += 1
-		end
+local function hookCoinLabel(coinsTextLabel)
+    -- disconnect old if any
+    local conn
+    conn = coinsTextLabel:GetPropertyChangedSignal("Text"):Connect(function()
+        local newVal = tonumber(coinsTextLabel.Text) or 0
 
-		currentCoins = newCoins
-		updateStatsLabel()
-	end
+        -- accumulate total coins gained
+        if newVal > prevCoins then
+            totalCoins = totalCoins + (newVal - prevCoins)
+        end
+
+        -- reached full bag?
+        if newVal == MAX_BAG and prevCoins < MAX_BAG then
+            successfulResets = successfulResets + 1
+        end
+
+        prevCoins = newVal
+        updateGui(newVal)
+    end)
+
+    -- initialize
+    local initial = tonumber(coinsTextLabel.Text) or 0
+    prevCoins = initial
+    updateGui(initial)
+
+    return conn
 end
 
--- Handle character + death tracking
-local function onCharacterAdded(character)
-	local humanoid = character:WaitForChild("Humanoid", 5)
-	if humanoid then
-		humanoid.Died:Connect(function()
-			deaths += 1
-			updateStatsLabel()
-		end)
-	end
+-- ─── CHARACTER & DEATH HANDLING ───────────────────────────────────────────────
+local function onCharacter(char)
+    -- track deaths
+    local humanoid = char:WaitForChild("Humanoid")
+    humanoid.Died:Connect(function()
+        -- if we died *before* filling bag, count as a normal death
+        if prevCoins < MAX_BAG then
+            deaths = deaths + 1
+            updateGui(prevCoins)
+        end
+    end)
 
-	-- Re-bind coin label updates
-	local coinsLabel = getCoinsLabel()
-	coinsLabel:GetPropertyChangedSignal("Text"):Connect(onCoinsChanged)
+    -- wait for the in‑game Coins label to appear
+    -- Players > LocalPlayer > PlayerGui > MainGUI > Game > CoinBags > Container > BeachBall > CurrencyFrame > Icon > Coins
+    local pg = localPlayer:WaitForChild("PlayerGui")
+    local coinsLabel = pg:WaitForChild("MainGUI")
+                        :WaitForChild("Game")
+                        :WaitForChild("CoinBags")
+                        :WaitForChild("Container")
+                        :WaitForChild("BeachBall")
+                        :WaitForChild("CurrencyFrame")
+                        :WaitForChild("Icon")
+                        :WaitForChild("Coins")
 
-	-- Initial update
-	onCoinsChanged()
+    -- hook it
+    hookCoinLabel(coinsLabel)
 end
 
--- Initial hooks
-if player.Character then
-	onCharacterAdded(player.Character)
+-- ─── INIT ─────────────────────────────────────────────────────────────────────
+localPlayer.CharacterAdded:Connect(onCharacter)
+-- if character already loaded
+if localPlayer.Character then
+    onCharacter(localPlayer.Character)
 end
-player.CharacterAdded:Connect(onCharacterAdded)
-
