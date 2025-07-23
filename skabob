@@ -252,163 +252,129 @@ end)
 
 
 
+-- >> StarterPlayerScripts/BagTracker.lua << --
+
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
 local localPlayer = Players.LocalPlayer
-local playerGui = localPlayer:WaitForChild("PlayerGui")
 
--- The path to the Coins TextLabel, from your earlier example
-local coinsTextLabel = playerGui:WaitForChild("MainGUI")
-	:WaitForChild("Game")
-	:WaitForChild("CoinBags")
-	:WaitForChild("Container")
-	:WaitForChild("BeachBall")
-	:WaitForChild("CurrencyFrame")
-	:WaitForChild("Icon")
-	:WaitForChild("Coins")
-
--- Constants
+-- ─── VARIABLES ────────────────────────────────────────────────────────────────
 local MAX_BAG = 40
+local prevCoins = 0
+local totalCoins = 0
+local successfulResets = 0
+local deaths = 0
 
--- Persistent session data stored as Attributes on PlayerGui (session only)
-local function getStat(name)
-	return playerGui:GetAttribute(name) or 0
-end
-local function setStat(name, value)
-	playerGui:SetAttribute(name, value)
-end
+-- ─── GUI SETUP ─────────────────────────────────────────────────────────────────
+local function buildGui()
+    -- parent a ScreenGui under PlayerGui (once)
+    local playerGui = localPlayer:WaitForChild("PlayerGui")
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "BagTracker"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = playerGui
 
--- Initialize stats if not set
-if getStat("SuccessfulResets") == 0 then
-	setStat("SuccessfulResets", 0)
-end
-if getStat("Deaths") == 0 then
-	setStat("Deaths", 0)
-end
-if getStat("TotalCoins") == 0 then
-	setStat("TotalCoins", 0)
-end
+    -- frame
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 200, 0, 100)
+    frame.Position = UDim2.new(0, 10, 0, 10)
+    frame.BackgroundTransparency = 0.5
+    frame.BackgroundColor3 = Color3.new(0,0,0)
+    frame.Parent = screenGui
 
--- Create the GUI Frame
-local frame = Instance.new("Frame")
-frame.Name = "StatsFrame"
-frame.AnchorPoint = Vector2.new(0, 0)
-frame.Position = UDim2.new(0.01, 0, 0.01, 0)
-frame.Size = UDim2.new(0, 220, 0, 120)
-frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-frame.BackgroundTransparency = 0.3
-frame.BorderSizePixel = 0
-frame.Parent = playerGui
+    -- helper to create a label
+    local function makeLabel(name, posY)
+        local lbl = Instance.new("TextLabel")
+        lbl.Name = name
+        lbl.Size = UDim2.new(1, -10, 0, 20)
+        lbl.Position = UDim2.new(0, 5, 0, posY)
+        lbl.BackgroundTransparency = 1
+        lbl.TextColor3 = Color3.new(1,1,1)
+        lbl.Font = Enum.Font.SourceSans
+        lbl.TextSize = 18
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.Text = name .. ": 0"
+        lbl.Parent = frame
+        return lbl
+    end
 
--- UIListLayout for vertical alignment and padding
-local layout = Instance.new("UIListLayout")
-layout.Parent = frame
-layout.SortOrder = Enum.SortOrder.LayoutOrder
-layout.Padding = UDim.new(0, 6)
+    local bagLabel   = makeLabel("Bag",          0)
+    local resetLabel = makeLabel("SuccessfulResets", 20)
+    local deathLabel = makeLabel("Deaths",       40)
+    local totalLabel = makeLabel("TotalCoins",   60)
 
--- Helper function: create a text label with responsive sizing
-local function createLabel(text)
-	local label = Instance.new("TextLabel")
-	label.BackgroundTransparency = 1
-	label.Text = text
-	label.TextColor3 = Color3.fromRGB(255, 255, 255)
-	label.TextXAlignment = Enum.TextXAlignment.Left
-	label.Size = UDim2.new(1, -10, 0, 20) -- Full width minus padding, fixed height
-	label.Font = Enum.Font.GothamBold
-	label.Parent = frame
-	return label
-end
+    -- updater function
+    local function updateGui(currentBag)
+        bagLabel.Text   = ("Bag: %d/%d"):format(currentBag, MAX_BAG)
+        resetLabel.Text = "Successful Resets: " .. successfulResets
+        deathLabel.Text = "Deaths: "            .. deaths
+        totalLabel.Text = "Total Coins: "       .. totalCoins
+    end
 
-local bagLabel = createLabel("Bag: 0/" .. MAX_BAG)
-local resetsLabel = createLabel("Successful Resets: 0")
-local deathsLabel = createLabel("Deaths: 0")
-local totalCoinsLabel = createLabel("Total Coins: 0")
-
--- Responsive update function based on frame size
-local function updateResponsive()
-	-- Adjust text size based on frame height (simple logic)
-	local labelCount = 4
-	local labelHeight = (frame.AbsoluteSize.Y - layout.Padding.Offset * (labelCount - 1)) / labelCount
-	local textSize = math.clamp(labelHeight * 0.6, 12, 20) -- clamp between 12 and 20
-
-	for _, label in ipairs(frame:GetChildren()) do
-		if label:IsA("TextLabel") then
-			label.TextSize = textSize
-			label.Size = UDim2.new(1, -10, 0, labelHeight)
-		end
-	end
+    return updateGui
 end
 
-frame:GetPropertyChangedSignal("AbsoluteSize"):Connect(updateResponsive)
-RunService.Heartbeat:Connect(updateResponsive)
-updateResponsive()
+-- ─── TRACKING LOGIC ────────────────────────────────────────────────────────────
+local updateGui = buildGui()
 
--- Variables to track deaths and respawns
-local character = localPlayer.Character
-local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+local function hookCoinLabel(coinsTextLabel)
+    -- disconnect old if any
+    local conn
+    conn = coinsTextLabel:GetPropertyChangedSignal("Text"):Connect(function()
+        local newVal = tonumber(coinsTextLabel.Text) or 0
 
-local function updateLabels()
-	local coins = tonumber(coinsTextLabel.Text) or 0
-	bagLabel.Text = string.format("Bag: %d/%d", coins, MAX_BAG)
-	resetsLabel.Text = "Successful Resets: " .. getStat("SuccessfulResets")
-	deathsLabel.Text = "Deaths: " .. getStat("Deaths")
-	totalCoinsLabel.Text = "Total Coins: " .. getStat("TotalCoins")
+        -- accumulate total coins gained
+        if newVal > prevCoins then
+            totalCoins = totalCoins + (newVal - prevCoins)
+        end
+
+        -- reached full bag?
+        if newVal == MAX_BAG and prevCoins < MAX_BAG then
+            successfulResets = successfulResets + 1
+        end
+
+        prevCoins = newVal
+        updateGui(newVal)
+    end)
+
+    -- initialize
+    local initial = tonumber(coinsTextLabel.Text) or 0
+    prevCoins = initial
+    updateGui(initial)
+
+    return conn
 end
 
--- Update total coins collected when coins increase (session total)
-local lastCoinAmount = 0
-coinsTextLabel:GetPropertyChangedSignal("Text"):Connect(function()
-	local currentCoins = tonumber(coinsTextLabel.Text) or 0
-	if currentCoins > lastCoinAmount then
-		local totalCoins = getStat("TotalCoins")
-		setStat("TotalCoins", totalCoins + (currentCoins - lastCoinAmount))
-	end
-	lastCoinAmount = currentCoins
-	updateLabels()
-end)
+-- ─── CHARACTER & DEATH HANDLING ───────────────────────────────────────────────
+local function onCharacter(char)
+    -- track deaths
+    local humanoid = char:WaitForChild("Humanoid")
+    humanoid.Died:Connect(function()
+        -- if we died *before* filling bag, count as a normal death
+        if prevCoins < MAX_BAG then
+            deaths = deaths + 1
+            updateGui(prevCoins)
+        end
+    end)
 
-updateLabels()
+    -- wait for the in‑game Coins label to appear
+    -- Players > LocalPlayer > PlayerGui > MainGUI > Game > CoinBags > Container > BeachBall > CurrencyFrame > Icon > Coins
+    local pg = localPlayer:WaitForChild("PlayerGui")
+    local coinsLabel = pg:WaitForChild("MainGUI")
+                        :WaitForChild("Game")
+                        :WaitForChild("CoinBags")
+                        :WaitForChild("Container")
+                        :WaitForChild("BeachBall")
+                        :WaitForChild("CurrencyFrame")
+                        :WaitForChild("Icon")
+                        :WaitForChild("Coins")
 
--- Track deaths before reset
-local function onHumanoidDied()
-	-- Increase death count only if bag isn't full yet
-	if tonumber(coinsTextLabel.Text) < MAX_BAG then
-		local deaths = getStat("Deaths")
-		setStat("Deaths", deaths + 1)
-		updateLabels()
-	end
+    -- hook it
+    hookCoinLabel(coinsLabel)
 end
 
--- Track successful resets (when bag reaches full)
-local function onBagFull()
-	local successfulResets = getStat("SuccessfulResets")
-	setStat("SuccessfulResets", successfulResets + 1)
-	setStat("Deaths", 0)  -- reset deaths count for next run
-	updateLabels()
-end
-
--- Listen to humanoid Died event, update on character respawn
-local function onCharacterAdded(char)
-	character = char
-	humanoid = character:WaitForChild("Humanoid")
-
-	humanoid.Died:Connect(onHumanoidDied)
-
-	-- Reset local tracking variables
-	lastCoinAmount = tonumber(coinsTextLabel.Text) or 0
-	updateLabels()
-end
-
-localPlayer.CharacterAdded:Connect(onCharacterAdded)
+-- ─── INIT ─────────────────────────────────────────────────────────────────────
+localPlayer.CharacterAdded:Connect(onCharacter)
+-- if character already loaded
 if localPlayer.Character then
-	onCharacterAdded(localPlayer.Character)
+    onCharacter(localPlayer.Character)
 end
-
--- Listen for bag full condition
-coinsTextLabel:GetPropertyChangedSignal("Text"):Connect(function()
-	local coins = tonumber(coinsTextLabel.Text) or 0
-	if coins >= MAX_BAG then
-		onBagFull()
-	end
-end)
-
