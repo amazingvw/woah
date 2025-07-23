@@ -213,3 +213,119 @@ ws.ChildAdded:Connect(onChildAdded)
 if player.Character then
 	sweepWorkspace()
 end
+
+
+
+
+
+
+
+
+
+
+-- Teleportation check: detect if character moves >400 studs, then move down 10 studs
+player.CharacterAdded:Connect(function(char)
+	task.spawn(function()
+		local hrp = char:WaitForChild("HumanoidRootPart")
+		local lastPosition = hrp.Position
+
+		while char.Parent do
+			RunService.Heartbeat:Wait()
+
+			local currentPosition = hrp.Position
+			local distance = (currentPosition - lastPosition).Magnitude
+
+			if distance >= 400 then
+				local pivot = char:GetPivot()
+				char:PivotTo(CFrame.new(pivot.Position - Vector3.new(0, 10, 0)))
+				print("Character teleported over 400 studs — moved down by 10 studs.")
+			end
+
+			lastPosition = currentPosition
+		end
+	end)
+end)
+
+
+
+
+
+
+
+local Players = game:GetService("Players")
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+-- Path to the external Coins TextLabel
+local function getCoinsLabel()
+	return playerGui:WaitForChild("MainGUI")
+		:WaitForChild("Game")
+		:WaitForChild("CoinBags")
+		:WaitForChild("Container")
+		:WaitForChild("BeachBall")
+		:WaitForChild("CurrencyFrame")
+		:WaitForChild("Icon")
+		:WaitForChild("Coins")
+end
+
+-- GUI Elements
+local statsGui = playerGui:WaitForChild("StatsGUI")
+local statsLabel = statsGui:WaitForChild("StatsLabel")
+
+-- Stat Tracking
+local bagMax = 40
+local currentCoins = 0
+local totalCoins = 0
+local successfulResets = 0
+local deaths = 0
+
+-- Update the GUI text
+local function updateStatsLabel()
+	statsLabel.Text = string.format(
+		"Bag: %d/%d\nSuccessful Resets: %d\nDeaths: %d\nTotal Coins: %d",
+		currentCoins, bagMax, successfulResets, deaths, totalCoins
+	)
+end
+
+-- Handle coin change
+local function onCoinsChanged()
+	local coinsLabel = getCoinsLabel()
+	local newCoins = tonumber(coinsLabel.Text)
+	if newCoins then
+		if newCoins > currentCoins then
+			totalCoins += (newCoins - currentCoins)
+		end
+
+		if newCoins >= bagMax and currentCoins < bagMax then
+			successfulResets += 1
+		end
+
+		currentCoins = newCoins
+		updateStatsLabel()
+	end
+end
+
+-- Handle character + death tracking
+local function onCharacterAdded(character)
+	local humanoid = character:WaitForChild("Humanoid", 5)
+	if humanoid then
+		humanoid.Died:Connect(function()
+			deaths += 1
+			updateStatsLabel()
+		end)
+	end
+
+	-- Re-bind coin label updates
+	local coinsLabel = getCoinsLabel()
+	coinsLabel:GetPropertyChangedSignal("Text"):Connect(onCoinsChanged)
+
+	-- Initial update
+	onCoinsChanged()
+end
+
+-- Initial hooks
+if player.Character then
+	onCharacterAdded(player.Character)
+end
+player.CharacterAdded:Connect(onCharacterAdded)
+
