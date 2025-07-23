@@ -274,32 +274,32 @@ local function buildGui()
     screenGui.Parent = playerGui
 
     -- frame
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 200, 0, 100)
-    frame.Position = UDim2.new(0, 10, 0, 10)
+    frame.Size = UDim2.new(0, 400, 0, 200)  -- doubled from 200x100
+    frame.Position = UDim2.new(0.5, -200, 0.5, -100)  -- centered (offset by half width & height)
     frame.BackgroundTransparency = 0.5
-    frame.BackgroundColor3 = Color3.new(0,0,0)
-    frame.Parent = screenGui
+    frame.BackgroundColor3 = Color3.new(0, 0, 0)
 
     -- helper to create a label
     local function makeLabel(name, posY)
         local lbl = Instance.new("TextLabel")
         lbl.Name = name
-        lbl.Size = UDim2.new(1, -10, 0, 20)
-        lbl.Position = UDim2.new(0, 5, 0, posY)
+        lbl.Size = UDim2.new(1, -20, 0, 40)  -- doubled height and horizontal padding
+        lbl.Position = UDim2.new(0, 10, 0, posY)  -- increased left padding a bit
         lbl.BackgroundTransparency = 1
-        lbl.TextColor3 = Color3.new(1,1,1)
+        lbl.TextColor3 = Color3.new(1, 1, 1)
         lbl.Font = Enum.Font.SourceSans
         lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.TextScaled = true  -- scale text to fit label size nicely
         lbl.Text = name .. ": 0"
         lbl.Parent = frame
         return lbl
     end
 
-    local bagLabel   = makeLabel("Bag",          0)
-    local resetLabel = makeLabel("SuccessfulResets", 20)
-    local deathLabel = makeLabel("Deaths",       40)
-    local totalLabel = makeLabel("TotalCoins",   60)
+    local bagLabel = makeLabel("Bag", 0)
+    local resetLabel = makeLabel("SuccessfulResets", 40)  -- doubled spacing from 20 to 40
+    local deathLabel = makeLabel("Deaths", 80)
+    local totalLabel = makeLabel("TotalCoins", 120)
+
 
     -- updater function
     local function updateGui(currentBag)
