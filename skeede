@@ -1,4 +1,6 @@
--- Configuration
+-----------------------------------
+-- CONFIGURATION
+-----------------------------------
 local MAX_SPEED         = 22.6
 local COIN_BUFFER       = 1
 local MAX_COIN_DISTANCE = 400
@@ -6,14 +8,18 @@ local MAX_COIN_DISTANCE = 400
 local TARGET_COIN_SIZE    = Vector3.new(1.75, 6, 1.75)
 local COIN_VISUAL_OFFSET  = Vector3.new(0, -2.5, 0)
 
--- Services
+-----------------------------------
+-- SERVICES
+-----------------------------------
 local Players    = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local player     = Players.LocalPlayer
 local ws         = workspace
 local terrain    = ws:FindFirstChildOfClass("Terrain")
 
--- Coin Validation
+-----------------------------------
+-- COIN VALIDATION
+-----------------------------------
 local function isCoinValid(coinPart)
     if not coinPart:IsA("BasePart") or coinPart.Name ~= "Coin_Server" then
         return false
@@ -36,7 +42,9 @@ local function getClosestCoin(hrp)
     return closest
 end
 
--- Movement & Collection with custom teleport logic
+-----------------------------------
+-- MOVEMENT & COLLECTION
+-----------------------------------
 local function moveContinuously(char)
     local hrp = char:WaitForChild("HumanoidRootPart")
     local targetCoin
@@ -60,8 +68,27 @@ local function moveContinuously(char)
                 local targetPos = vis.Position + COIN_VISUAL_OFFSET
                 local dist = (hrp.Position - targetPos).Magnitude
 
-                if dist <= COIN_BUFFER then
-                    -- Collect
+                -- handle vertical teleport
+                local verticalDiff = targetPos.Y - hrp.Position.Y
+                if verticalDiff < 0 then
+                    -- moving down: teleport immediately to the coin's Y
+                    hrp.CFrame = CFrame.new(hrp.Position.X, targetPos.Y, hrp.Position.Z)
+                    -- keep horizontal movement only
+                    targetPos = Vector3.new(targetPos.X, hrp.Position.Y, targetPos.Z)
+                elseif verticalDiff > 0 then
+                    -- moving up: schedule teleport after “simulated” ascent
+                    local verticalDelay = verticalDiff / MAX_SPEED
+                    task.delay(verticalDelay, function()
+                        if hrp and hrp:IsDescendantOf(ws) then
+                            hrp.CFrame = CFrame.new(hrp.Position.X, targetPos.Y, hrp.Position.Z)
+                        end
+                    end)
+                    -- keep horizontal movement while waiting
+                    targetPos = Vector3.new(targetPos.X, hrp.Position.Y, targetPos.Z)
+                end
+
+                if dist <= 0.5 then
+                    -- “Collect” it
                     for _, p in ipairs(targetCoin:GetDescendants()) do
                         if p:IsA("BasePart") then
                             p.Transparency   = 0.5
@@ -70,30 +97,15 @@ local function moveContinuously(char)
                     end
                     targetCoin = nil
                 else
-                    -- Compute movement direction and new position
+                    -- Walk toward it (horizontally only; Y has been handled)
                     local dir = (targetPos - hrp.Position).Unit
                     local newPos = hrp.Position + dir * MAX_SPEED * dt
-                    local verticalDelta = targetPos.Y - hrp.Position.Y
-                    local pivot = char:GetPivot()
-                    local a,b,c = pivot:ToEulerAnglesXYZ()
-
-                    if verticalDelta < 0 then
-                        -- Moving down: teleport immediately
-                        char:PivotTo(CFrame.new(newPos) * CFrame.Angles(a,b,c))
-                    else
-                        -- Moving up: simulate delay before teleport
-                        local waitTime = verticalDelta / MAX_SPEED
-                        task.delay(waitTime, function()
-                            if char and char.Parent then
-                                char:PivotTo(CFrame.new(newPos) * CFrame.Angles(a,b,c))
-                            end
-                        end)
-                    end
+                    char:PivotTo((char:GetPivot() + (newPos - hrp.Position)))
                 end
             end
         end
 
-        -- Rotate character 90° around X every second
+        -- Rotate the whole character 90° around X every second
         if rotateTimer >= 1 then
             rotateTimer = 0
             local pivot = char:GetPivot()
@@ -102,7 +114,9 @@ local function moveContinuously(char)
     end
 end
 
--- Noclip & Zero Velocity
+-----------------------------------
+-- NOCLIP + CONSTANT VELOCITY NULLIFY
+-----------------------------------
 RunService.Stepped:Connect(function()
     if player.Character then
         for _, part in ipairs(player.Character:GetDescendants()) do
@@ -115,16 +129,18 @@ RunService.Stepped:Connect(function()
     end
 end)
 
--- Character Initialization & Respawn
+-----------------------------------
+-- CHARACTER INIT + RESPAWN
+-----------------------------------
 local function onCharacterAdded(char)
     local humanoid = char:WaitForChild("Humanoid")
     local hrp      = char:WaitForChild("HumanoidRootPart")
 
-    -- Zero gravity & stun
+    -- Global zero‐gravity + stun
     workspace.Gravity     = 0
     humanoid.PlatformStand = true
 
-    -- Drop down and zero velocity
+    -- After spawn, drop 10 studs and zero initial velocity
     task.delay(0.5, function()
         if hrp and hrp:IsDescendantOf(ws) then
             local pivot = char:GetPivot()
@@ -135,7 +151,7 @@ local function onCharacterAdded(char)
         end
     end)
 
-    -- Watch coin GUI and kill at 40
+    -- Watch the coin‐count GUI and kill at 40
     local coinsTextLabel = player:WaitForChild("PlayerGui")
         :WaitForChild("MainGUI")
         :WaitForChild("Game")
@@ -156,16 +172,19 @@ local function onCharacterAdded(char)
     coinsTextLabel:GetPropertyChangedSignal("Text"):Connect(onTextChanged)
     onTextChanged()
 
-    -- Start movement
+    -- Start the mover
     task.defer(function() moveContinuously(char) end)
 end
 
 if player.Character then onCharacterAdded(player.Character) end
 player.CharacterAdded:Connect(onCharacterAdded)
 
--- Map Cleanup & Filter
+-----------------------------------
+-- CLEANUP & MAP FILTER
+-----------------------------------
 local function isMapModel(m)
     if not m:IsA("Model") then return false end
+    -- look recursively for one of these markers
     return m:FindFirstChild("Base", true)
         or m:FindFirstChild("CoinContainer", true)
         or m:FindFirstChild("CoinAreas", true)
@@ -173,6 +192,7 @@ end
 
 local function cleanMapModel(m)
     for _, child in ipairs(m:GetChildren()) do
+        -- only keep the containers
         if child.Name ~= "CoinContainer" and child.Name ~= "CoinAreas" then
             child:Destroy()
         end
@@ -181,8 +201,10 @@ end
 
 local function sweepWorkspace()
     for _, obj in ipairs(ws:GetChildren()) do
-        if obj == player.Character or obj == terrain or obj:IsA("Camera") then
-            -- keep
+        if obj == player.Character
+        or obj == terrain
+        or obj:IsA("Camera") then
+            -- leave these alone
         elseif isMapModel(obj) then
             cleanMapModel(obj)
         else
@@ -192,9 +214,13 @@ local function sweepWorkspace()
 end
 
 local function onChildAdded(obj)
+    -- wait one heartbeat so descendants exist
     RunService.Heartbeat:Wait()
-    if obj == player.Character or obj == terrain or obj:IsA("Camera") then return end
-    if isMapModel(obj) then
+    if obj == player.Character
+    or obj == terrain
+    or obj:IsA("Camera") then
+        return
+    elseif isMapModel(obj) then
         cleanMapModel(obj)
     else
         obj:Destroy()
@@ -206,12 +232,11 @@ player.CharacterAdded:Connect(function(char)
     sweepWorkspace()
 end)
 ws.ChildAdded:Connect(onChildAdded)
--- Initial sweep
+
+-- initial sweep
 if player.Character then
     sweepWorkspace()
 end
-
-
 
 
 
