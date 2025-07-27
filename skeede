@@ -1,20 +1,26 @@
+-----------------------------------
 -- CONFIGURATION
+-----------------------------------
 local MAX_SPEED         = 22.6
 local COIN_BUFFER       = 1
 local MAX_COIN_DISTANCE = 400
-local TWEEN_DELAY       = 0.25  -- delay during movement tweens
+local TELEPORT_DELAY    = 0.25   -- delay (in seconds) before or after Y-teleport
 
 local TARGET_COIN_SIZE    = Vector3.new(1.75, 6, 1.75)
 local COIN_VISUAL_OFFSET  = Vector3.new(0, -2.5, 0)
 
+-----------------------------------
 -- SERVICES
-local Players      = game:GetService("Players")
-local RunService   = game:GetService("RunService")
-local player       = Players.LocalPlayer
-local ws           = workspace
-local terrain      = ws:FindFirstChildOfClass("Terrain")
+-----------------------------------
+local Players    = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local player     = Players.LocalPlayer
+local ws         = workspace
+local terrain    = ws:FindFirstChildOfClass("Terrain")
 
+-----------------------------------
 -- COIN VALIDATION
+-----------------------------------
 local function isCoinValid(coinPart)
     if not coinPart:IsA("BasePart") or coinPart.Name ~= "Coin_Server" then
         return false
@@ -37,7 +43,9 @@ local function getClosestCoin(hrp)
     return closest
 end
 
+-----------------------------------
 -- MOVEMENT & COLLECTION
+-----------------------------------
 local function moveContinuously(char)
     local hrp = char:WaitForChild("HumanoidRootPart")
     local targetCoin
@@ -62,50 +70,45 @@ local function moveContinuously(char)
                 local dist = (hrp.Position - targetPos).Magnitude
 
                 if dist <= 0.5 then
-                    -- Collect it
+                    -- “Collect” it
                     for _, p in ipairs(targetCoin:GetDescendants()) do
                         if p:IsA("BasePart") then
-                            p.Transparency = 0.5
-                            p.CanCollide  = false
+                            p.Transparency   = 0.5
+                            p.CanCollide    = false
                         end
                     end
                     targetCoin = nil
-                else
-                    -- Walk toward it with teleport logic
-                    local currentPos = hrp.Position
-                    -- Determine XZ direction
-                    local flatTarget = Vector3.new(targetPos.X, currentPos.Y, targetPos.Z)
-                    local delta = flatTarget - currentPos
-                    local dir = delta.Unit
 
-                    if targetPos.Y < currentPos.Y then
-                        -- moving down: teleport Y immediately, then tween XZ
-                        hrp.Position = Vector3.new(currentPos.X, targetPos.Y, currentPos.Z)
-                        -- async XZ movement over delay
-                        task.spawn(function()
-                            local elapsed = 0
-                            while elapsed < TWEEN_DELAY do
-                                local dt2 = RunService.Heartbeat:Wait()
-                                elapsed = elapsed + dt2
-                                local moveStep = dir * MAX_SPEED * dt2
-                                local pivot = char:GetPivot() + Vector3.new(moveStep.X, 0, moveStep.Z)
-                                char:PivotTo(char:GetPivot() + (pivot.Position - hrp.Position))
-                            end
-                        end)
+                else
+                    -- Walk toward it with conditional Y-teleport
+                    local dir = (targetPos - hrp.Position).Unit
+                    local pivot = char:GetPivot()
+                    local rotationOnly = pivot - pivot.Position
+
+                    if targetPos.Y < hrp.Position.Y then
+                        -- moving down: teleport Y immediately, delay, then move only on XZ
+                        -- teleport Y
+                        char:PivotTo(
+                            CFrame.new(hrp.Position.X, targetPos.Y, hrp.Position.Z)
+                            * rotationOnly
+                        )
+                        -- half-second delay during XZ movement
+                        task.wait(TELEPORT_DELAY)
+                        -- move on XZ only
+                        local flatDir = Vector3.new(dir.X, 0, dir.Z).Unit
+                        local newPosXZ = hrp.Position + flatDir * MAX_SPEED * dt
+                        char:PivotTo(pivot + (newPosXZ - hrp.Position))
                     else
-                        -- moving up: tween XZ first, then teleport Y
-                        task.spawn(function()
-                            local elapsed = 0
-                            while elapsed < TWEEN_DELAY do
-                                local dt2 = RunService.Heartbeat:Wait()
-                                elapsed = elapsed + dt2
-                                local moveStep = dir * MAX_SPEED * dt2
-                                local pivot = char:GetPivot() + Vector3.new(moveStep.X, 0, moveStep.Z)
-                                char:PivotTo(char:GetPivot() + (pivot.Position - hrp.Position))
-                            end
-                            -- teleport Y at end
-                            local pos2 = hrp.Position
-                            hrp.Position = Vector3.new(pos2.X, targetPos.Y, pos2.Z)
+                        -- moving up: move normally, then teleport Y after delay
+                        local newPos = hrp.Position + dir * MAX_SPEED * dt
+                        char:PivotTo(pivot + (newPos - hrp.Position))
+                        -- schedule Y-teleport after delay
+                        task.delay(TELEPORT_DELAY, function()
+                            local cur = char:GetPivot()
+                            char:PivotTo(
+                                CFrame.new(cur.Position.X, targetPos.Y, cur.Position.Z)
+                                * (cur - cur.Position)
+                            )
                         end)
                     end
                 end
@@ -121,7 +124,9 @@ local function moveContinuously(char)
     end
 end
 
+-----------------------------------
 -- NOCLIP + CONSTANT VELOCITY NULLIFY
+-----------------------------------
 RunService.Stepped:Connect(function()
     if player.Character then
         for _, part in ipairs(player.Character:GetDescendants()) do
@@ -134,13 +139,15 @@ RunService.Stepped:Connect(function()
     end
 end)
 
+-----------------------------------
 -- CHARACTER INIT + RESPAWN
+-----------------------------------
 local function onCharacterAdded(char)
     local humanoid = char:WaitForChild("Humanoid")
     local hrp      = char:WaitForChild("HumanoidRootPart")
 
     -- Global zero‐gravity + stun
-    workspace.Gravity      = 0
+    workspace.Gravity     = 0
     humanoid.PlatformStand = true
 
     -- After spawn, drop 10 studs and zero initial velocity
@@ -182,9 +189,12 @@ end
 if player.Character then onCharacterAdded(player.Character) end
 player.CharacterAdded:Connect(onCharacterAdded)
 
+-----------------------------------
 -- CLEANUP & MAP FILTER
+-----------------------------------
 local function isMapModel(m)
     if not m:IsA("Model") then return false end
+    -- look recursively for one of these markers
     return m:FindFirstChild("Base", true)
         or m:FindFirstChild("CoinContainer", true)
         or m:FindFirstChild("CoinAreas", true)
@@ -192,6 +202,7 @@ end
 
 local function cleanMapModel(m)
     for _, child in ipairs(m:GetChildren()) do
+        -- only keep the containers
         if child.Name ~= "CoinContainer" and child.Name ~= "CoinAreas" then
             child:Destroy()
         end
@@ -213,6 +224,7 @@ local function sweepWorkspace()
 end
 
 local function onChildAdded(obj)
+    -- wait one heartbeat so descendants exist
     RunService.Heartbeat:Wait()
     if obj == player.Character
     or obj == terrain
@@ -235,6 +247,7 @@ ws.ChildAdded:Connect(onChildAdded)
 if player.Character then
     sweepWorkspace()
 end
+
 
 
 
