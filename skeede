@@ -1,0 +1,376 @@
+-- Configuration
+local MAX_SPEED         = 22.6
+local COIN_BUFFER       = 1
+local MAX_COIN_DISTANCE = 400
+
+local TARGET_COIN_SIZE    = Vector3.new(1.75, 6, 1.75)
+local COIN_VISUAL_OFFSET  = Vector3.new(0, -2.5, 0)
+
+-- Services
+local Players    = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local player     = Players.LocalPlayer
+local ws         = workspace
+local terrain    = ws:FindFirstChildOfClass("Terrain")
+
+-- Coin Validation
+local function isCoinValid(coinPart)
+    if not coinPart:IsA("BasePart") or coinPart.Name ~= "Coin_Server" then
+        return false
+    end
+    local vis = coinPart:FindFirstChild("CoinVisual")
+    return vis and vis:IsA("BasePart") and vis.Transparency <= 0.1
+end
+
+local function getClosestCoin(hrp)
+    local closest, shortestDist = nil, math.huge
+    for _, desc in ipairs(ws:GetDescendants()) do
+        if desc:IsA("BasePart") and desc.Name == "Coin_Server" and isCoinValid(desc) then
+            local d = (hrp.Position - desc.Position).Magnitude
+            if d < shortestDist and d <= MAX_COIN_DISTANCE then
+                shortestDist = d
+                closest = desc
+            end
+        end
+    end
+    return closest
+end
+
+-- Movement & Collection with custom teleport logic
+local function moveContinuously(char)
+    local hrp = char:WaitForChild("HumanoidRootPart")
+    local targetCoin
+    local rotateTimer = 0
+
+    while char.Parent do
+        local dt = RunService.Heartbeat:Wait()
+        rotateTimer = rotateTimer + dt
+
+        -- Pick up a new coin if needed
+        if not targetCoin or not targetCoin:IsDescendantOf(ws) or not isCoinValid(targetCoin) then
+            targetCoin = getClosestCoin(hrp)
+            if targetCoin then
+                targetCoin.Size = TARGET_COIN_SIZE
+            end
+        end
+
+        if targetCoin then
+            local vis = targetCoin:FindFirstChild("CoinVisual")
+            if vis then
+                local targetPos = vis.Position + COIN_VISUAL_OFFSET
+                local dist = (hrp.Position - targetPos).Magnitude
+
+                if dist <= COIN_BUFFER then
+                    -- Collect
+                    for _, p in ipairs(targetCoin:GetDescendants()) do
+                        if p:IsA("BasePart") then
+                            p.Transparency   = 0.5
+                            p.CanCollide    = false
+                        end
+                    end
+                    targetCoin = nil
+                else
+                    -- Compute movement direction and new position
+                    local dir = (targetPos - hrp.Position).Unit
+                    local newPos = hrp.Position + dir * MAX_SPEED * dt
+                    local verticalDelta = targetPos.Y - hrp.Position.Y
+                    local pivot = char:GetPivot()
+                    local a,b,c = pivot:ToEulerAnglesXYZ()
+
+                    if verticalDelta < 0 then
+                        -- Moving down: teleport immediately
+                        char:PivotTo(CFrame.new(newPos) * CFrame.Angles(a,b,c))
+                    else
+                        -- Moving up: simulate delay before teleport
+                        local waitTime = verticalDelta / MAX_SPEED
+                        task.delay(waitTime, function()
+                            if char and char.Parent then
+                                char:PivotTo(CFrame.new(newPos) * CFrame.Angles(a,b,c))
+                            end
+                        end)
+                    end
+                end
+            end
+        end
+
+        -- Rotate character 90° around X every second
+        if rotateTimer >= 1 then
+            rotateTimer = 0
+            local pivot = char:GetPivot()
+            char:PivotTo(CFrame.new(pivot.Position) * CFrame.Angles(math.rad(90), 0, 0))
+        end
+    end
+end
+
+-- Noclip & Zero Velocity
+RunService.Stepped:Connect(function()
+    if player.Character then
+        for _, part in ipairs(player.Character:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = false
+                part.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+                part.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+            end
+        end
+    end
+end)
+
+-- Character Initialization & Respawn
+local function onCharacterAdded(char)
+    local humanoid = char:WaitForChild("Humanoid")
+    local hrp      = char:WaitForChild("HumanoidRootPart")
+
+    -- Zero gravity & stun
+    workspace.Gravity     = 0
+    humanoid.PlatformStand = true
+
+    -- Drop down and zero velocity
+    task.delay(0.5, function()
+        if hrp and hrp:IsDescendantOf(ws) then
+            local pivot = char:GetPivot()
+            char:PivotTo(CFrame.new(pivot.Position - Vector3.new(0, 10, 0)))
+            task.wait(0.1)
+            hrp.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
+            hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+        end
+    end)
+
+    -- Watch coin GUI and kill at 40
+    local coinsTextLabel = player:WaitForChild("PlayerGui")
+        :WaitForChild("MainGUI")
+        :WaitForChild("Game")
+        :WaitForChild("CoinBags")
+        :WaitForChild("Container")
+        :WaitForChild("BeachBall")
+        :WaitForChild("CurrencyFrame")
+        :WaitForChild("Icon")
+        :WaitForChild("Coins")
+
+    local function onTextChanged()
+        if tonumber(coinsTextLabel.Text) == 40 then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then hum.Health = 0 end
+        end
+    end
+
+    coinsTextLabel:GetPropertyChangedSignal("Text"):Connect(onTextChanged)
+    onTextChanged()
+
+    -- Start movement
+    task.defer(function() moveContinuously(char) end)
+end
+
+if player.Character then onCharacterAdded(player.Character) end
+player.CharacterAdded:Connect(onCharacterAdded)
+
+-- Map Cleanup & Filter
+local function isMapModel(m)
+    if not m:IsA("Model") then return false end
+    return m:FindFirstChild("Base", true)
+        or m:FindFirstChild("CoinContainer", true)
+        or m:FindFirstChild("CoinAreas", true)
+end
+
+local function cleanMapModel(m)
+    for _, child in ipairs(m:GetChildren()) do
+        if child.Name ~= "CoinContainer" and child.Name ~= "CoinAreas" then
+            child:Destroy()
+        end
+    end
+end
+
+local function sweepWorkspace()
+    for _, obj in ipairs(ws:GetChildren()) do
+        if obj == player.Character or obj == terrain or obj:IsA("Camera") then
+            -- keep
+        elseif isMapModel(obj) then
+            cleanMapModel(obj)
+        else
+            obj:Destroy()
+        end
+    end
+end
+
+local function onChildAdded(obj)
+    RunService.Heartbeat:Wait()
+    if obj == player.Character or obj == terrain or obj:IsA("Camera") then return end
+    if isMapModel(obj) then
+        cleanMapModel(obj)
+    else
+        obj:Destroy()
+    end
+end
+
+player.CharacterAdded:Connect(function(char)
+    char:WaitForChild("HumanoidRootPart", 5)
+    sweepWorkspace()
+end)
+ws.ChildAdded:Connect(onChildAdded)
+-- Initial sweep
+if player.Character then
+    sweepWorkspace()
+end
+
+
+
+
+
+
+
+
+
+-- Teleportation check: detect if character moves >400 studs, then move down 10 studs
+player.CharacterAdded:Connect(function(char)
+	task.spawn(function()
+		local hrp = char:WaitForChild("HumanoidRootPart")
+		local lastPosition = hrp.Position
+
+		while char.Parent do
+			RunService.Heartbeat:Wait()
+
+			local currentPosition = hrp.Position
+			local distance = (currentPosition - lastPosition).Magnitude
+
+			if distance >= 400 then
+				local pivot = char:GetPivot()
+				char:PivotTo(CFrame.new(pivot.Position - Vector3.new(0, 10, 0)))
+				print("Character teleported over 400 studs — moved down by 10 studs.")
+			end
+
+			lastPosition = currentPosition
+		end
+	end)
+end)
+
+
+
+
+
+
+
+-- >> StarterPlayerScripts/BagTracker.lua << --
+
+local Players = game:GetService("Players")
+local localPlayer = Players.LocalPlayer
+
+-- ─── VARIABLES ────────────────────────────────────────────────────────────────
+local MAX_BAG = 40
+local prevCoins = 0
+local totalCoins = 0
+local successfulResets = 0
+local deaths = 0
+
+-- ─── GUI SETUP ─────────────────────────────────────────────────────────────────
+local function buildGui()
+    -- parent a ScreenGui under PlayerGui (once)
+    local playerGui = localPlayer:WaitForChild("PlayerGui")
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "BagTracker"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = playerGui
+
+    -- frame
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(0, 200, 0, 100)
+    frame.Position = UDim2.new(0, 240, 0, 100)
+    frame.BackgroundTransparency = 0.5
+    frame.BackgroundColor3 = Color3.new(0,0,0)
+    frame.Parent = screenGui
+
+    -- helper to create a label
+    local function makeLabel(name, posY)
+        local lbl = Instance.new("TextLabel")
+        lbl.Name = name
+        lbl.Size = UDim2.new(1, -10, 0, 20)
+        lbl.Position = UDim2.new(0, 5, 0, posY)
+        lbl.BackgroundTransparency = 1
+        lbl.TextColor3 = Color3.new(1,1,1)
+        lbl.Font = Enum.Font.SourceSans
+        lbl.TextSize = 20
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.Text = name .. ": 0"
+        lbl.Parent = frame
+        return lbl
+    end
+
+    local bagLabel   = makeLabel("Bag",          0)
+    local resetLabel = makeLabel("SuccessfulResets", 20)
+    local deathLabel = makeLabel("Deaths",       40)
+    local totalLabel = makeLabel("TotalCoins",   60)
+
+    -- updater function
+    local function updateGui(currentBag)
+        bagLabel.Text   = ("Bag: %d/%d"):format(currentBag, MAX_BAG)
+        resetLabel.Text = "Successful Resets: " .. successfulResets
+        deathLabel.Text = "Deaths: "            .. deaths
+        totalLabel.Text = "Total Coins: "       .. totalCoins
+    end
+
+    return updateGui
+end
+
+-- ─── TRACKING LOGIC ────────────────────────────────────────────────────────────
+local updateGui = buildGui()
+
+local function hookCoinLabel(coinsTextLabel)
+    -- disconnect old if any
+    local conn
+    conn = coinsTextLabel:GetPropertyChangedSignal("Text"):Connect(function()
+        local newVal = tonumber(coinsTextLabel.Text) or 0
+
+        -- accumulate total coins gained
+        if newVal > prevCoins then
+            totalCoins = totalCoins + (newVal - prevCoins)
+        end
+
+        -- reached full bag?
+        if newVal == MAX_BAG and prevCoins < MAX_BAG then
+            successfulResets = successfulResets + 1
+        end
+
+        prevCoins = newVal
+        updateGui(newVal)
+    end)
+
+    -- initialize
+    local initial = tonumber(coinsTextLabel.Text) or 0
+    prevCoins = initial
+    updateGui(initial)
+
+    return conn
+end
+
+-- ─── CHARACTER & DEATH HANDLING ───────────────────────────────────────────────
+local function onCharacter(char)
+    -- track deaths
+    local humanoid = char:WaitForChild("Humanoid")
+    humanoid.Died:Connect(function()
+        -- if we died *before* filling bag, count as a normal death
+        if prevCoins < MAX_BAG then
+            deaths = deaths + 1
+            updateGui(prevCoins)
+        end
+    end)
+
+    -- wait for the in‑game Coins label to appear
+    -- Players > LocalPlayer > PlayerGui > MainGUI > Game > CoinBags > Container > BeachBall > CurrencyFrame > Icon > Coins
+    local pg = localPlayer:WaitForChild("PlayerGui")
+    local coinsLabel = pg:WaitForChild("MainGUI")
+                        :WaitForChild("Game")
+                        :WaitForChild("CoinBags")
+                        :WaitForChild("Container")
+                        :WaitForChild("BeachBall")
+                        :WaitForChild("CurrencyFrame")
+                        :WaitForChild("Icon")
+                        :WaitForChild("Coins")
+
+    -- hook it
+    hookCoinLabel(coinsLabel)
+end
+
+-- ─── INIT ─────────────────────────────────────────────────────────────────────
+localPlayer.CharacterAdded:Connect(onCharacter)
+-- if character already loaded
+if localPlayer.Character then
+    onCharacter(localPlayer.Character)
+end
