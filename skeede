@@ -4,7 +4,7 @@
 local MAX_SPEED          = 22.6
 local COIN_BUFFER        = 1
 local MAX_COIN_DISTANCE  = 400
-local TELEPORT_DELAY     = 0.5         -- delay (in seconds) before applying Y teleport
+local TELEPORT_DELAY     = 0.25         -- delay (in seconds) before applying Y teleport
 
 local TARGET_COIN_SIZE   = Vector3.new(1.75, 6, 1.75)
 local COIN_VISUAL_OFFSET = Vector3.new(0, -2.5, 0)
