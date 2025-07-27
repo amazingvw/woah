@@ -1,13 +1,13 @@
 -----------------------------------
 -- CONFIGURATION
 -----------------------------------
-local MAX_SPEED         = 22.6
-local COIN_BUFFER       = 1
-local MAX_COIN_DISTANCE = 400
-local TELEPORT_DELAY    = 0.25   -- delay (in seconds) before or after Y-teleport
+local MAX_SPEED          = 22.6
+local COIN_BUFFER        = 1
+local MAX_COIN_DISTANCE  = 400
+local TELEPORT_DELAY     = 0.5         -- delay (in seconds) before applying Y teleport
 
-local TARGET_COIN_SIZE    = Vector3.new(1.75, 6, 1.75)
-local COIN_VISUAL_OFFSET  = Vector3.new(0, -2.5, 0)
+local TARGET_COIN_SIZE   = Vector3.new(1.75, 6, 1.75)
+local COIN_VISUAL_OFFSET = Vector3.new(0, -2.5, 0)
 
 -----------------------------------
 -- SERVICES
@@ -51,6 +51,9 @@ local function moveContinuously(char)
     local targetCoin
     local rotateTimer = 0
 
+    -- per-target state
+    local isDown, teleported
+
     while char.Parent do
         local dt = RunService.Heartbeat:Wait()
         rotateTimer = rotateTimer + dt
@@ -58,8 +61,16 @@ local function moveContinuously(char)
         -- Pick up a new coin if needed
         if not targetCoin or not targetCoin:IsDescendantOf(ws) or not isCoinValid(targetCoin) then
             targetCoin = getClosestCoin(hrp)
+            teleported = false
             if targetCoin then
+                -- resize visual for easier targeting
                 targetCoin.Size = TARGET_COIN_SIZE
+
+                -- determine if the coin is below us
+                local vis = targetCoin:FindFirstChild("CoinVisual")
+                local targetPos = vis and (vis.Position + COIN_VISUAL_OFFSET) or targetCoin.Position
+                local yDiff = targetPos.Y - hrp.Position.Y
+                isDown = (yDiff < 0)
             end
         end
 
@@ -70,6 +81,17 @@ local function moveContinuously(char)
                 local dist = (hrp.Position - targetPos).Magnitude
 
                 if dist <= 0.5 then
+                    -- if moving up, teleport after delay once we've arrived
+                    if not isDown and not teleported then
+                        teleported = true
+                        task.delay(TELEPORT_DELAY, function()
+                            if hrp and hrp:IsDescendantOf(ws) then
+                                local p = hrp.Position
+                                hrp.Position = Vector3.new(p.X, targetPos.Y, p.Z)
+                            end
+                        end)
+                    end
+
                     -- “Collect” it
                     for _, p in ipairs(targetCoin:GetDescendants()) do
                         if p:IsA("BasePart") then
@@ -78,37 +100,21 @@ local function moveContinuously(char)
                         end
                     end
                     targetCoin = nil
-
                 else
-                    -- Walk toward it with conditional Y-teleport
-                    local dir = (targetPos - hrp.Position).Unit
-                    local pivot = char:GetPivot()
-                    local rotationOnly = pivot - pivot.Position
+                    -- Walk toward it on XZ plane
+                    local dir = (Vector3.new(targetPos.X, 0, targetPos.Z) - Vector3.new(hrp.Position.X, 0, hrp.Position.Z)).Unit
+                    local newXZ = Vector3.new(hrp.Position.X, 0, hrp.Position.Z) + dir * MAX_SPEED * dt
+                    local newPos = Vector3.new(newXZ.X, hrp.Position.Y, newXZ.Z)
+                    char:PivotTo(CFrame.new(newPos))
 
-                    if targetPos.Y < hrp.Position.Y then
-                        -- moving down: teleport Y immediately, delay, then move only on XZ
-                        -- teleport Y
-                        char:PivotTo(
-                            CFrame.new(hrp.Position.X, targetPos.Y, hrp.Position.Z)
-                            * rotationOnly
-                        )
-                        -- half-second delay during XZ movement
-                        task.wait(TELEPORT_DELAY)
-                        -- move on XZ only
-                        local flatDir = Vector3.new(dir.X, 0, dir.Z).Unit
-                        local newPosXZ = hrp.Position + flatDir * MAX_SPEED * dt
-                        char:PivotTo(pivot + (newPosXZ - hrp.Position))
-                    else
-                        -- moving up: move normally, then teleport Y after delay
-                        local newPos = hrp.Position + dir * MAX_SPEED * dt
-                        char:PivotTo(pivot + (newPos - hrp.Position))
-                        -- schedule Y-teleport after delay
+                    -- if moving down, teleport Y after delay once movement starts
+                    if isDown and not teleported then
+                        teleported = true
                         task.delay(TELEPORT_DELAY, function()
-                            local cur = char:GetPivot()
-                            char:PivotTo(
-                                CFrame.new(cur.Position.X, targetPos.Y, cur.Position.Z)
-                                * (cur - cur.Position)
-                            )
+                            if hrp and hrp:IsDescendantOf(ws) then
+                                local p = hrp.Position
+                                hrp.Position = Vector3.new(p.X, targetPos.Y, p.Z)
+                            end
                         end)
                     end
                 end
