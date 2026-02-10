@@ -1,178 +1,476 @@
--- SAFE WALK + TELEPORT MINESWEEPER SOLVER (STABLE VERSION)
+-- Safe-Walk Solver (improved path-follow + proper teleport height)
+-- Press U to toggle. Core solver logic preserved.
 
--- SETTINGS
+-- SETTINGS & STATE
 local ENABLED = false
 local TOGGLE_KEY = Enum.KeyCode.U
-local ACTION_DELAY = 0
-local WALK_MAX_PATH_LENGTH = 35
+local ACTION_DELAY = 0 -- no delay
+local WALK_MAX_PATH_LENGTH = 40 -- maximum path length (studs) we consider "walkable"
+local WAYPOINT_TIMEOUT = 2 -- seconds allowed per waypoint
+local TELEPORT_MARGIN = 3 -- studs above the part top when teleporting
+local PILLAR_SIZE = Vector3.new(6, 100, 6) -- blocker pillars
 
-local player = game.Players.LocalPlayer
+local Players = game:GetService("Players")
 local PathfindingService = game:GetService("PathfindingService")
 local UserInputService = game:GetService("UserInputService")
 
--- STATE
+local player = Players.LocalPlayer
+
 local neighborCache = {}
 local isMoving = false
-local processed = {}
-local blockers = {}
+local processedParts = {} -- visited/teleported set
+local blockers = {} -- part -> blocker part
+local blockerFolder = workspace:FindFirstChild("SolverBlockers")
+if not blockerFolder then
+    blockerFolder = Instance.new("Folder")
+    blockerFolder.Name = "SolverBlockers"
+    blockerFolder.Parent = workspace
+end
 
--- BLOCKER FOLDER
-local blockerFolder = workspace:FindFirstChild("SolverBlockers") or Instance.new("Folder", workspace)
-blockerFolder.Name = "SolverBlockers"
-
--- UTIL
-local function chat(msg)
+-- Helpers
+local function chatNotify(msg)
     pcall(function()
         game:GetService("StarterGui"):SetCore("ChatMakeSystemMessage", {
-            Text = "[Solver] " .. msg,
-            Color = Color3.new(1,1,1)
+            Text = "[Solver]: " .. msg,
+            Color = Color3.fromRGB(255,255,255),
+            Font = Enum.Font.GothamBold
         })
     end)
 end
 
-local function isCellOpen(p)
-    if not p or not p.Parent then return true end
-    if p:FindFirstChild("NumberGui") then return true end
-    local c = p.Color
-    return p.Transparency > 0.5 or (c.R > 0.7 and c.G > 0.7 and c.B < 0.6)
+local function isCellOpen(part)
+    if not part or not part.Parent then return true end
+    local ok, c = pcall(function() return part.Color end)
+    if not ok or not c then return true end
+    local isBeige = (c.R > 0.7 and c.G > 0.7 and c.B < 0.6)
+    return (part.Transparency and part.Transparency > 0.5) or isBeige or (part:FindFirstChild("NumberGui") ~= nil)
 end
 
--- BLOCKERS (ONLY DEFINITELY UNSAFE)
-local function updateBlockers(unsafeSet)
-    local parts = workspace.Flag.Parts:GetChildren()
+-- Data scraping (unchanged logic)
+local function getSolverData()
+    local flagFolder = workspace:FindFirstChild("Flag")
+    local folder = flagFolder and flagFolder:FindFirstChild("Parts")
+    if not folder then return {} end
 
-    for _, p in ipairs(parts) do
-        local unsafe = unsafeSet[p]
-        if unsafe then
-            if not blockers[p] then
-                local b = Instance.new("Part")
-                b.Size = Vector3.new(6, 100, 6)
-                b.Anchored = true
-                b.CanCollide = true
-                b.Transparency = 1
-                b.CFrame = p.CFrame * CFrame.new(0, 50, 0)
-                b.Parent = blockerFolder
-                blockers[p] = b
+    local numberData = {}
+    local allParts = folder:GetChildren()
+
+    for _, cell in ipairs(allParts) do
+        if isCellOpen(cell) then
+            local label = cell:FindFirstChild("NumberGui") and cell.NumberGui:FindFirstChildOfClass("TextLabel")
+            local val = (label and tonumber(label.Text)) or 0
+
+            if not neighborCache[cell] then
+                local nbs = {}
+                local maxDist = (cell.Size and cell.Size.X or 4) * 1.8
+                for _, n in ipairs(allParts) do
+                    if n ~= cell and (n.Position - cell.Position).Magnitude < maxDist then
+                        table.insert(nbs, n)
+                    end
+                end
+                neighborCache[cell] = nbs
             end
+
+            local hidden = {}
+            local mines = 0
+            for _, n in ipairs(neighborCache[cell]) do
+                if not isCellOpen(n) then
+                    local ok, isBlack = pcall(function() return n.Color == Color3.new(0,0,0) end)
+                    if ok and isBlack then
+                        mines = mines + 1
+                    else
+                        table.insert(hidden, n)
+                    end
+                end
+            end
+
+            if #hidden > 0 or val == 0 then
+                table.insert(numberData, { obj = cell, eVal = val - mines, hidden = hidden })
+            end
+        end
+    end
+
+    return numberData
+end
+
+-- Blocker management (exclude solver-approved safe tiles)
+local function ensureBlockerFor(part)
+    if not part or not part.Parent then return end
+    if blockers[part] and blockers[part].Parent then return end
+
+    local b = Instance.new("Part")
+    b.Name = "SolverBlocker"
+    b.Size = PILLAR_SIZE
+    b.Anchored = true
+    b.CanCollide = true
+    b.CanQuery = false
+    b.CanTouch = false
+    b.CastShadow = false
+    b.Transparency = 1
+    b.Material = Enum.Material.SmoothPlastic
+    local px, py, pz = part.Position.X, part.Position.Y, part.Position.Z
+    b.CFrame = CFrame.new(px, py + (PILLAR_SIZE.Y/2), pz)
+    b.Parent = blockerFolder
+    blockers[part] = b
+end
+
+local function removeBlockerFor(part)
+    local b = blockers[part]
+    if b and b.Parent then
+        pcall(function() b:Destroy() end)
+    end
+    blockers[part] = nil
+end
+
+local function clearAllBlockers()
+    for k, v in pairs(blockers) do
+        if v and v.Parent then
+            pcall(function() v:Destroy() end)
+        end
+    end
+    blockers = {}
+end
+
+-- Update blockers but allow pass-through for parts in allowPassSet
+local function updateBlockers(allowPassSet)
+    local flagFolder = workspace:FindFirstChild("Flag")
+    local partsFolder = flagFolder and flagFolder:FindFirstChild("Parts")
+    if not partsFolder then
+        clearAllBlockers()
+        return
+    end
+
+    local allParts = partsFolder:GetChildren()
+    local keep = {}
+
+    for _, p in ipairs(allParts) do
+        if not p or not p.Parent then
+            -- skip
         else
-            if blockers[p] then
-                blockers[p]:Destroy()
-                blockers[p] = nil
+            local covered = not isCellOpen(p)
+            local ok, val = pcall(function() return p.Color end)
+            local isMarkedMine = (ok and val and val == Color3.new(0,0,0))
+
+            local allowed = false
+            if allowPassSet and allowPassSet[p] then allowed = true end
+            if processedParts[p] then allowed = true end
+
+            if (covered or isMarkedMine) and (not allowed) then
+                ensureBlockerFor(p)
+                keep[p] = true
             end
+        end
+    end
+
+    for partRef, _ in pairs(blockers) do
+        if not keep[partRef] then
+            removeBlockerFor(partRef)
         end
     end
 end
 
--- PATH CHECK (STRICT)
-local function canSafelyWalk(from, to)
-    local path = PathfindingService:CreatePath({
-        AgentRadius = 2,
-        AgentHeight = 5,
-        AgentCanJump = true
-    })
-
-    path:ComputeAsync(from, to)
-    if path.Status ~= Enum.PathStatus.Success then return false end
-
-    local len = 0
-    local wp = path:GetWaypoints()
-    for i = 2, #wp do
-        len += (wp[i].Position - wp[i-1].Position).Magnitude
+-- Path utilities
+local function computePathLengthFromWaypoints(waypoints)
+    local total = 0
+    if not waypoints or #waypoints == 0 then return math.huge end
+    for i = 2, #waypoints do
+        total = total + (waypoints[i].Position - waypoints[i-1].Position).Magnitude
     end
-
-    return len <= WALK_MAX_PATH_LENGTH
+    return total
 end
 
--- MOVE
-local function walkTo(part)
+-- Returns: success(bool), pathObject or nil, length or nil
+local function computePath(startPos, endPos, maxLen)
+    local ok, pathOrErr = pcall(function()
+        local path = PathfindingService:CreatePath({
+            AgentRadius = 2,
+            AgentHeight = 5,
+            AgentCanJump = true
+        })
+        path:ComputeAsync(startPos, endPos)
+        return path
+    end)
+    if not ok or not pathOrErr then
+        return false, nil, nil
+    end
+    local path = pathOrErr
+    if path.Status ~= Enum.PathStatus.Success then
+        return false, path, nil
+    end
+    local waypoints = path:GetWaypoints()
+    local length = computePathLengthFromWaypoints(waypoints)
+    if maxLen and length > maxLen then
+        return false, path, length
+    end
+    return true, path, length
+end
+
+-- Follow a path's waypoints robustly (returns true on success)
+local function followPathWaypoints(humanoid, root, path)
+    if not path or not humanoid or not root then return false end
+    local waypoints = path:GetWaypoints()
+    if not waypoints or #waypoints == 0 then return false end
+
+    for i = 1, #waypoints do
+        local wp = waypoints[i]
+        local pos = wp.Position
+        -- If this waypoint requires a jump, instruct humanoid
+        if wp.Action == Enum.PathWaypointAction.Jump then
+            humanoid.Jump = true
+        end
+        humanoid:MoveTo(pos)
+        local start = tick()
+        while true do
+            if not humanoid.Parent or not root.Parent then return false end
+            local dist = (root.Position - pos).Magnitude
+            if dist <= 3 then -- close enough to waypoint
+                break
+            end
+            if tick() - start > WAYPOINT_TIMEOUT then
+                return false
+            end
+            task.wait(0.08)
+        end
+    end
+    return true
+end
+
+-- Movement
+local function safeWalkToPart(targetPart)
+    if not targetPart or not targetPart.Parent then return false end
+    if not player then return false end
     local char = player.Character
-    local hum = char and char:FindFirstChild("Humanoid")
+    local humanoid = char and char:FindFirstChild("Humanoid")
     local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not hum or not root then return false end
+    if not humanoid or not root or isMoving then return false end
 
     isMoving = true
-    hum:MoveTo(part.Position)
-    hum.MoveToFinished:Wait()
+    local startPos = root.Position
+    -- compute path
+    local success, pathObj, length = computePath(startPos, targetPart.Position, WALK_MAX_PATH_LENGTH)
+    if not success or not pathObj then
+        isMoving = false
+        return false
+    end
+
+    -- Follow waypoints. If fails, return false so higher-level code can teleport
+    local ok = followPathWaypoints(humanoid, root, pathObj)
+    task.wait(ACTION_DELAY)
     isMoving = false
 
-    return (root.Position - part.Position).Magnitude < 4
+    -- Final proximity check to target
+    if ok and root and (root.Position - targetPart.Position).Magnitude <= ((targetPart.Size and math.max(targetPart.Size.X, targetPart.Size.Z) or 3) * 1.5) then
+        return true
+    else
+        return false
+    end
 end
 
-local function teleportTo(part)
-    local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-    root.CFrame = part.CFrame * CFrame.new(0, part.Size.Y/2 + 2, 0)
+-- Teleportation placed just above target part top surface
+local function teleportToPart(targetPart)
+    if not targetPart or not targetPart.Parent or not player then return false end
+    local char = player.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return false end
+    local up = (targetPart.Size and (targetPart.Size.Y / 2) + TELEPORT_MARGIN) or (3 + TELEPORT_MARGIN)
+    root.CFrame = CFrame.new(targetPart.Position + Vector3.new(0, up, 0))
+    task.wait(0) -- no extra wait
+    return true
 end
 
--- SOLVER
+-- Deduction logic (unchanged)
 local function runSolver()
     if not ENABLED or isMoving then return end
 
-    local parts = workspace.Flag.Parts:GetChildren()
-    local safeTiles = {}
-    local unsafeTiles = {}
+    local data = getSolverData()
+    local safeQueue = {}
+    local foundAnything = false
 
-    -- BASIC RULES
-    for _, p in ipairs(parts) do
-        if p.Color == Color3.new(0,0,0) then
-            unsafeTiles[p] = true
-        elseif isCellOpen(p) then
-            processed[p] = true
-        end
-    end
+    -- 1. Subset deduction (your original)
+    for i = 1, #data do
+        for j = 1, #data do
+            if i ~= j then
+                local d1, d2 = data[i], data[j]
+                if (d1.obj.Position - d2.obj.Position).Magnitude < 12 then
+                    local s1, s2 = d1.hidden, d2.hidden
+                    local isSubset = true
+                    for _, x in ipairs(s1) do
+                        local inS2 = false
+                        for _, y in ipairs(s2) do
+                            if x == y then inS2 = true break end
+                        end
+                        if not inS2 then isSubset = false break end
+                    end
 
-    -- SIMPLE SAFE DISCOVERY
-    for _, p in ipairs(parts) do
-        if isCellOpen(p) and p:FindFirstChild("NumberGui") then
-            local num = tonumber(p.NumberGui.TextLabel.Text)
-            if num == 0 then
-                for _, n in ipairs(parts) do
-                    if (n.Position - p.Position).Magnitude < 7 and not isCellOpen(n) then
-                        safeTiles[n] = true
+                    if isSubset and #s2 > #s1 then
+                        local diffMines = d2.eVal - d1.eVal
+                        if diffMines == 0 then
+                            for _, x in ipairs(s2) do
+                                local inS1 = false
+                                for _, y in ipairs(s1) do
+                                    if x == y then inS1 = true break end
+                                end
+                                if not inS1 then
+                                    table.insert(safeQueue, x)
+                                    foundAnything = true
+                                end
+                            end
+                        end
                     end
                 end
             end
         end
     end
 
-    updateBlockers(unsafeTiles)
-
-    -- ACT
-    local root = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-
-    for tile in pairs(safeTiles) do
-        if not processed[tile] then
-            if canSafelyWalk(root.Position, tile.Position) then
-                if walkTo(tile) then
-                    processed[tile] = true
-                    return
+    -- 2. Basic logic (mark mines & safe)
+    for _, d in ipairs(data) do
+        if #d.hidden > 0 then
+            if #d.hidden == d.eVal then
+                for _, n in ipairs(d.hidden) do
+                    pcall(function() n.Color = Color3.new(0,0,0) end)
                 end
+            elseif d.eVal <= 0 then
+                for _, n in ipairs(d.hidden) do
+                    table.insert(safeQueue, n)
+                    foundAnything = true
+                end
+            end
+        end
+    end
+
+    -- dedupe and ensure still-covered
+    local uniq = {}
+    local uniqueQueue = {}
+    for _, p in ipairs(safeQueue) do
+        if p and p.Parent and not uniq[p] and not isCellOpen(p) then
+            uniq[p] = true
+            uniqueQueue[#uniqueQueue + 1] = p
+        end
+    end
+
+    -- Build allowPassSet for blockers (safe tiles + processed)
+    local allowPassSet = {}
+    for _, p in ipairs(uniqueQueue) do allowPassSet[p] = true end
+    for p, _ in pairs(processedParts) do allowPassSet[p] = true end
+
+    -- Update blockers now that we know solver-approved safe tiles
+    updateBlockers(allowPassSet)
+
+    -- If we have safe tiles, try to walk to the nearest walkable one
+    if #uniqueQueue > 0 then
+        local char = player and player.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        local playerPos = root and root.Position
+
+        if playerPos then
+            table.sort(uniqueQueue, function(a,b)
+                return (a.Position - playerPos).Magnitude < (b.Position - playerPos).Magnitude
+            end)
+        end
+
+        local acted = false
+
+        for _, target in ipairs(uniqueQueue) do
+            if processedParts[target] then
+                -- skip
             else
-                teleportTo(tile)
-                processed[tile] = true
-                return
+                local canWalk = false
+                if playerPos then
+                    local ok, path, length = computePath(playerPos, target.Position, WALK_MAX_PATH_LENGTH)
+                    if ok and path then
+                        canWalk = true
+                    else
+                        canWalk = false
+                    end
+                end
+
+                if canWalk then
+                    local walkedOK = safeWalkToPart(target)
+                    if walkedOK then
+                        processedParts[target] = true
+                        acted = true
+                        break
+                    else
+                        -- fallback teleport
+                        local teleOK = teleportToPart(target)
+                        if teleOK then
+                            processedParts[target] = true
+                            acted = true
+                            break
+                        end
+                    end
+                else
+                    -- teleport directly
+                    local teleOK = teleportToPart(target)
+                    if teleOK then
+                        processedParts[target] = true
+                        acted = true
+                        break
+                    end
+                end
+            end
+        end
+
+        if acted then
+            task.wait(ACTION_DELAY)
+        end
+
+    elseif not foundAnything then
+        -- GAMBLE: pick random covered tile and teleport right above it
+        local flagFolder = workspace:FindFirstChild("Flag")
+        local partsFolder = flagFolder and flagFolder:FindFirstChild("Parts")
+        if partsFolder then
+            local allParts = partsFolder:GetChildren()
+            local candidates = {}
+            for _, p in ipairs(allParts) do
+                if not isCellOpen(p) and not processedParts[p] then
+                    table.insert(candidates, p)
+                end
+            end
+            if #candidates > 0 then
+                local pick = candidates[math.random(#candidates)]
+                if pick then
+                    teleportToPart(pick)
+                    processedParts[pick] = true
+                end
             end
         end
     end
 end
 
--- TOGGLE
-UserInputService.InputBegan:Connect(function(i,g)
-    if g then return end
-    if i.KeyCode == TOGGLE_KEY then
+-- Toggle & persistence
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.KeyCode == TOGGLE_KEY then
         ENABLED = not ENABLED
-        processed = {}
-        chat(ENABLED and "ON" or "OFF")
+        neighborCache = {}
+        processedParts = {}
+        if not ENABLED then
+            clearAllBlockers()
+        end
+        chatNotify("Solver " .. (ENABLED and "ON" or "OFF"))
     end
 end)
 
--- LOOP
+if player then
+    player.CharacterAdded:Connect(function(char)
+        isMoving = false
+        neighborCache = {}
+        processedParts = {}
+        local hum = char:WaitForChild("Humanoid")
+        hum.Died:Connect(function() isMoving = false end)
+    end)
+end
+
+-- Main loop
 task.spawn(function()
     while true do
-        pcall(runSolver)
+        local ok, err = pcall(runSolver)
+        if not ok then
+            warn("Solver Error: " .. tostring(err))
+        end
         task.wait(0.05)
     end
 end)
 
-chat("Solver loaded. Press U.")
+chatNotify("Safe-Walk Solver Loaded. Press 'U' to Toggle.")
