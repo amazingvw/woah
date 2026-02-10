@@ -1,23 +1,370 @@
-ll be that first returned value; we need to call directly
-                        local s, len = pathIsWalkable(playerPos, target.Position, WALK_MAX_PATH_LENGTH)
-                        if s then canWalk = true end
-                    else
-                        -- fallback: no path info — do not walk
-                        canWalk = false
+-- Safe-Walk Solver with invisible blocker pillars for unknown/mines
+-- Press U to toggle. No action delay by default.
+
+-- SETTINGS & STATE
+local ENABLED = false
+local TOGGLE_KEY = Enum.KeyCode.U
+local ACTION_DELAY = 0 -- no delay as requested
+local WALK_MAX_PATH_LENGTH = 40 -- maximum path length (studs) we consider "walkable"
+local TELEPORT_HEIGHT = 120 -- teleport above the blocker pillars (pillar half-height + margin)
+local TELEPORT_DELAY_AFTER = 0 -- no extra wait after teleport
+local PILLAR_SIZE = Vector3.new(6, 100, 6) -- 6x6 thick, 100 studs tall
+
+local player = game.Players.LocalPlayer
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local PathfindingService = game:GetService("PathfindingService")
+
+local neighborCache = {}
+local isMoving = false
+local processedParts = {} -- parts we've already visited/teleported to
+local blockers = {} -- map from tile part -> blocker part
+local blockerFolder = workspace:FindFirstChild("SolverBlockers")
+
+if not blockerFolder then
+    blockerFolder = Instance.new("Folder")
+    blockerFolder.Name = "SolverBlockers"
+    blockerFolder.Parent = workspace
+end
+
+-- HELPER FUNCTIONS
+local function chatNotify(msg)
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("ChatMakeSystemMessage", {
+            Text = "[Solver]: " .. msg,
+            Color = Color3.fromRGB(255, 255, 255),
+            Font = Enum.Font.GothamBold
+        })
+    end)
+end
+
+local function safeColor(p, col)
+    pcall(function() p.Color = col end)
+end
+
+local function isCellOpen(part)
+    if not part or not part.Parent then return true end
+    local ok, c = pcall(function() return part.Color end)
+    if not ok or not c then return true end
+    local isBeige = (c.R > 0.7 and c.G > 0.7 and c.B < 0.6)
+    return (part.Transparency and part.Transparency > 0.5) or isBeige or (part:FindFirstChild("NumberGui") ~= nil)
+end
+
+-- DATA SCRAPER
+local function getSolverData()
+    local flagFolder = workspace:FindFirstChild("Flag")
+    local folder = flagFolder and flagFolder:FindFirstChild("Parts")
+    if not folder then return {} end
+
+    local numberData = {}
+    local allParts = folder:GetChildren()
+
+    for _, cell in ipairs(allParts) do
+        -- only operate on revealed / number-bearing tiles (skip hidden tiles)
+        if isCellOpen(cell) then
+            local label = cell:FindFirstChild("NumberGui") and cell.NumberGui:FindFirstChildOfClass("TextLabel")
+            local val = (label and tonumber(label.Text)) or 0
+
+            if not neighborCache[cell] then
+                local nbs = {}
+                local maxDist = (cell.Size and cell.Size.X or 4) * 1.8
+                for _, n in ipairs(allParts) do
+                    if n ~= cell and (n.Position - cell.Position).Magnitude < maxDist then
+                        table.insert(nbs, n)
                     end
                 end
+                neighborCache[cell] = nbs
+            end
 
-                -- After checking with allowSet, restore pillars to block everything (so other checks are correct)
-                if partsFolder then updatePillars(partsFolder, nil) end
+            local hidden = {}
+            local mines = 0
+            for _, n in ipairs(neighborCache[cell]) do
+                if not isCellOpen(n) then
+                    local ok, isBlack = pcall(function() return n.Color == Color3.new(0,0,0) end)
+                    if ok and isBlack then
+                        mines = mines + 1
+                    else
+                        table.insert(hidden, n)
+                    end
+                end
+            end
+
+            if #hidden > 0 or val == 0 then
+                table.insert(numberData, { obj = cell, eVal = val - mines, hidden = hidden })
+            end
+        end
+    end
+
+    return numberData
+end
+
+-- BLOCKER MANAGEMENT
+local function ensureBlockerFor(part)
+    if not part or not part.Parent then return end
+    if blockers[part] and blockers[part].Parent then return end
+
+    local b = Instance.new("Part")
+    b.Name = "SolverBlocker"
+    b.Size = PILLAR_SIZE
+    b.Anchored = true
+    b.CanCollide = true
+    b.CanQuery = false
+    b.CanTouch = false
+    b.CastShadow = false
+    b.Transparency = 1 -- invisible
+    b.Material = Enum.Material.SmoothPlastic
+    -- place blocker centered on tile X,Z and raised by half pillar height so it covers above tile
+    local px, py, pz = part.Position.X, part.Position.Y, part.Position.Z
+    b.CFrame = CFrame.new(px, py + (PILLAR_SIZE.Y / 2), pz)
+    b.Parent = blockerFolder
+    blockers[part] = b
+end
+
+local function removeBlockerFor(part)
+    local b = blockers[part]
+    if b and b.Parent then
+        pcall(function() b:Destroy() end)
+    end
+    blockers[part] = nil
+end
+
+local function clearAllBlockers()
+    for k, v in pairs(blockers) do
+        if v and v.Parent then
+            pcall(function() v:Destroy() end)
+        end
+        blockers[k] = nil
+    end
+end
+
+local function updateBlockers()
+    -- keep blockers for all unknown (covered) tiles and for tiles marked as mine (black)
+    local flagFolder = workspace:FindFirstChild("Flag")
+    local partsFolder = flagFolder and flagFolder:FindFirstChild("Parts")
+    if not partsFolder then
+        clearAllBlockers()
+        return
+    end
+
+    local allParts = partsFolder:GetChildren()
+    local keep = {}
+
+    for _, p in ipairs(allParts) do
+        local covered = not isCellOpen(p)
+        local isMarkedMine = false
+        local ok, val = pcall(function() return p.Color end)
+        if ok and val then
+            isMarkedMine = (val == Color3.new(0,0,0))
+        end
+
+        if covered or isMarkedMine then
+            ensureBlockerFor(p)
+            keep[p] = true
+        end
+    end
+
+    -- remove blockers that are no longer needed
+    for partRef, blockerPart in pairs(blockers) do
+        if not keep[partRef] then
+            removeBlockerFor(partRef)
+        end
+    end
+end
+
+-- PATH UTILITIES
+local function computePathLengthFromWaypoints(waypoints)
+    local total = 0
+    if not waypoints or #waypoints == 0 then return math.huge end
+    for i = 2, #waypoints do
+        total = total + (waypoints[i].Position - waypoints[i-1].Position).Magnitude
+    end
+    return total
+end
+
+local function pathIsWalkable(startPos, endPos, maxLen)
+    local path = PathfindingService:CreatePath({
+        AgentRadius = 2,
+        AgentHeight = 5,
+        AgentCanJump = true,
+        AgentWalkableTypes = { Enum.Material.Grass, Enum.Material.Concrete, Enum.Material.SmoothPlastic, Enum.Material.Metal }
+    })
+    local ok, err = pcall(function()
+        path:ComputeAsync(startPos, endPos)
+    end)
+    if not ok then
+        return false, nil
+    end
+    if path.Status ~= Enum.PathStatus.Success then
+        return false, nil
+    end
+    local waypoints = path:GetWaypoints()
+    local length = computePathLengthFromWaypoints(waypoints)
+    if maxLen and length > maxLen then
+        return false, length
+    end
+    return true, length
+end
+
+-- MOVEMENT (WALK-TO)
+local function safeWalkTo(targetPart)
+    if not targetPart or not targetPart.Parent then return false end
+    local char = player and player.Character
+    local hum = char and char:FindFirstChild("Humanoid")
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+
+    if not hum or not root or isMoving then return false end
+
+    isMoving = true
+    local successMove = false
+
+    hum:MoveTo(targetPart.Position)
+    -- Wait either until MoveToFinished or a short timeout (without pausing the entire script indefinitely)
+    local ok, moved = pcall(function() return hum.MoveToFinished:Wait() end)
+    task.wait(ACTION_DELAY) -- zero if you requested no delay
+
+    if root and (root.Position - targetPart.Position).Magnitude <= ((targetPart.Size and math.max(targetPart.Size.X, targetPart.Size.Z) or 3) * 1.5) then
+        successMove = true
+    else
+        successMove = false
+    end
+
+    isMoving = false
+    return successMove
+end
+
+local function teleportTo(targetPart)
+    if not targetPart or not targetPart.Parent then return false end
+    local char = player and player.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return false end
+    root.CFrame = targetPart.CFrame * CFrame.new(0, TELEPORT_HEIGHT, 0)
+    task.wait(TELEPORT_DELAY_AFTER)
+    return true
+end
+
+-- MAIN SOLVER LOGIC
+local function runSolver()
+    if not ENABLED or isMoving then return end
+
+    -- keep blockers in sync with unknown/mines before planning paths
+    updateBlockers()
+
+    local data = getSolverData()
+    local safeQueue = {}
+    local foundAnything = false
+
+    -- 1. Euler Subset Logic (The advanced math)
+    for i = 1, #data do
+        for j = 1, #data do
+            if i ~= j then
+                local d1, d2 = data[i], data[j]
+                if (d1.obj.Position - d2.obj.Position).Magnitude < 12 then
+                    local s1, s2 = d1.hidden, d2.hidden
+                    local isSubset = true
+                    for _, x in ipairs(s1) do
+                        local inS2 = false
+                        for _, y in ipairs(s2) do
+                            if x == y then inS2 = true break end
+                        end
+                        if not inS2 then
+                            isSubset = false
+                            break
+                        end
+                    end
+
+                    if isSubset and #s2 > #s1 then
+                        local diffMines = d2.eVal - d1.eVal
+                        if diffMines == 0 then
+                            for _, x in ipairs(s2) do
+                                local inS1 = false
+                                for _, y in ipairs(s1) do
+                                    if x == y then inS1 = true break end
+                                end
+                                if not inS1 then
+                                    table.insert(safeQueue, x)
+                                    foundAnything = true
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- 2. Basic Logic (Flags and simple clears)
+    for _, d in ipairs(data) do
+        if #d.hidden > 0 then
+            -- Mark mines (visual marking)
+            if #d.hidden == d.eVal then
+                for _, n in ipairs(d.hidden) do
+                    pcall(function() n.Color = Color3.new(0,0,0) end)
+                end
+            elseif d.eVal <= 0 then
+                for _, n in ipairs(d.hidden) do
+                    table.insert(safeQueue, n)
+                    foundAnything = true
+                end
+            end
+        end
+    end
+
+    -- remove duplicates and ensure candidates are still covered
+    local uniq = {}
+    local uniqueQueue = {}
+    for _, p in ipairs(safeQueue) do
+        if p and p.Parent and not uniq[p] and not isCellOpen(p) then
+            uniq[p] = true
+            uniqueQueue[#uniqueQueue + 1] = p
+        end
+    end
+
+    -- If there are safe tiles, try to walk to the nearest walkable one.
+    if #uniqueQueue > 0 then
+        local char = player and player.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        local playerPos = root and root.Position
+
+        if playerPos then
+            table.sort(uniqueQueue, function(a, b)
+                return (a.Position - playerPos).Magnitude < (b.Position - playerPos).Magnitude
+            end)
+        end
+
+        local acted = false
+
+        for _, target in ipairs(uniqueQueue) do
+            if processedParts[target] then
+                -- skip already processed
+            else
+                local canWalk = false
+                if playerPos then
+                    local ok, length = pcall(function()
+                        return pathIsWalkable(playerPos, target.Position, WALK_MAX_PATH_LENGTH)
+                    end)
+                    if ok and type(length) == "number" then
+                        -- when pcall returns (true, length) length will be number (we wrapped incorrectly),
+                        -- but our pathIsWalkable returns (bool, length). Let's call it directly for clarity:
+                        local successWalkable, pathLen = pathIsWalkable(playerPos, target.Position, WALK_MAX_PATH_LENGTH)
+                        if successWalkable then
+                            canWalk = true
+                        else
+                            canWalk = false
+                        end
+                    else
+                        local successWalkable, pathLen = pathIsWalkable(playerPos, target.Position, WALK_MAX_PATH_LENGTH)
+                        if successWalkable then canWalk = true else canWalk = false end
+                    end
+                end
 
                 if canWalk then
                     local walkedOK = safeWalkTo(target)
                     if walkedOK then
                         processedParts[target] = true
                         acted = true
-                        break -- done one action this tick
+                        break
                     else
-                        -- fallback to teleport if walk failed
+                        -- fallback: teleport
                         local teleOK = teleportTo(target)
                         if teleOK then
                             processedParts[target] = true
@@ -26,7 +373,7 @@ ll be that first returned value; we need to call directly
                         end
                     end
                 else
-                    -- not walkable: teleport directly
+                    -- not walkable or no player pos: teleport directly
                     local teleOK = teleportTo(target)
                     if teleOK then
                         processedParts[target] = true
@@ -38,15 +385,16 @@ ll be that first returned value; we need to call directly
         end
 
         if acted then
-            -- no extra delay, but let the next loop see board updates
+            -- let the board update
+            task.wait(ACTION_DELAY)
         end
 
     elseif not foundAnything then
-        -- Nothing logically safe found: gamble by teleporting to a random covered tile
+        -- GAMBLE: pick random covered tile and teleport
         local flagFolder = workspace:FindFirstChild("Flag")
-        local partsFolder2 = flagFolder and flagFolder:FindFirstChild("Parts")
-        if partsFolder2 then
-            local allParts = partsFolder2:GetChildren()
+        local partsFolder = flagFolder and flagFolder:FindFirstChild("Parts")
+        if partsFolder then
+            local allParts = partsFolder:GetChildren()
             local candidates = {}
             for _, p in ipairs(allParts) do
                 if not isCellOpen(p) and not processedParts[p] then
@@ -56,8 +404,6 @@ ll be that first returned value; we need to call directly
             if #candidates > 0 then
                 local pick = candidates[math.random(#candidates)]
                 if pick then
-                    -- allow pick while path-checking (though we're teleporting)
-                    if partsFolder2 then updatePillars(partsFolder2, nil) end
                     teleportTo(pick)
                     processedParts[pick] = true
                 end
@@ -73,10 +419,9 @@ UserInputService.InputBegan:Connect(function(input, gpe)
         ENABLED = not ENABLED
         neighborCache = {}
         processedParts = {}
-        -- when toggling on, rebuild pillars to match current board
-        local ff = workspace:FindFirstChild("Flag")
-        local partsFolder = ff and ff:FindFirstChild("Parts")
-        if partsFolder then updatePillars(partsFolder, nil) end
+        if not ENABLED then
+            clearAllBlockers()
+        end
         chatNotify("Solver " .. (ENABLED and "ON" or "OFF"))
     end
 end)
@@ -101,8 +446,8 @@ task.spawn(function()
         if not ok then
             warn("Solver Error: " .. tostring(err))
         end
-        task.wait(0.05) -- a small tick to keep CPU low; you said no delays, but loop still needs a tick
+        task.wait(0.05)
     end
 end)
 
-chatNotify("Safe-Walk Solver (pillars enabled) Loaded. Press 'U' to Toggle.")
+chatNotify("Safe-Walk Solver Loaded. Press 'U' to Toggle.")
