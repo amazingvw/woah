@@ -1,241 +1,108 @@
------------------------------------
--- CONFIGURATION
------------------------------------
-local MAX_SPEED         = 22.6
-local COIN_BUFFER       = 1
-local MAX_COIN_DISTANCE = 400
+ll be that first returned value; we need to call directly
+                        local s, len = pathIsWalkable(playerPos, target.Position, WALK_MAX_PATH_LENGTH)
+                        if s then canWalk = true end
+                    else
+                        -- fallback: no path info — do not walk
+                        canWalk = false
+                    end
+                end
 
-local STEER_SPRING  = 45
-local STEER_DAMP    = 1
-local ROT_SPRING    = 700
-local ROT_DAMP      = 10
+                -- After checking with allowSet, restore pillars to block everything (so other checks are correct)
+                if partsFolder then updatePillars(partsFolder, nil) end
 
------------------------------------
--- SERVICES
------------------------------------
-local Players            = game:GetService("Players")
-local RunService         = game:GetService("RunService")
-local player             = Players.LocalPlayer
+                if canWalk then
+                    local walkedOK = safeWalkTo(target)
+                    if walkedOK then
+                        processedParts[target] = true
+                        acted = true
+                        break -- done one action this tick
+                    else
+                        -- fallback to teleport if walk failed
+                        local teleOK = teleportTo(target)
+                        if teleOK then
+                            processedParts[target] = true
+                            acted = true
+                            break
+                        end
+                    end
+                else
+                    -- not walkable: teleport directly
+                    local teleOK = teleportTo(target)
+                    if teleOK then
+                        processedParts[target] = true
+                        acted = true
+                        break
+                    end
+                end
+            end
+        end
 
------------------------------------
--- COIN VALIDATION
------------------------------------
-local function isCoinValid(coinPart)
-	if not coinPart:IsA("BasePart") or coinPart.Name ~= "Coin_Server" then
-		return false
-	end
-	local vis = coinPart:FindFirstChild("CoinVisual")
-	return vis and vis:IsA("BasePart") and vis.Transparency <= 0.1
-end
+        if acted then
+            -- no extra delay, but let the next loop see board updates
+        end
 
-local function getClosestCoin(hrp)
-	local closest, shortestDist = nil, math.huge
-	for _, desc in ipairs(workspace:GetDescendants()) do
-		if desc:IsA("BasePart") and desc.Name == "Coin_Server" and isCoinValid(desc) then
-			local dist = (hrp.Position - desc.Position).Magnitude
-			if dist < shortestDist and dist <= MAX_COIN_DISTANCE then
-				shortestDist = dist
-				closest = desc
-			end
-		end
-	end
-	return closest
-end
-
------------------------------------
--- MOVEMENT & COLLECTION
------------------------------------
-local function moveContinuously(char)
-	local hrp = char:WaitForChild("HumanoidRootPart")
-	local dirVel, rotVel = Vector3.zero, Vector3.zero
-	local forward = hrp.CFrame.LookVector
-	local targetCoin
-
-	while char.Parent do
-		local dt = RunService.Heartbeat:Wait()
-
-		if not targetCoin
-			or not targetCoin:IsDescendantOf(workspace)
-			or not isCoinValid(targetCoin) then
-			targetCoin = getClosestCoin(hrp)
-		end
-
-		if targetCoin then
-			local dist = (hrp.Position - targetCoin.Position).Magnitude
-			local radius = targetCoin.Size.Magnitude / 2 + COIN_BUFFER
-
-			if dist <= radius then
-				for _, p in ipairs(targetCoin:GetDescendants()) do
-					if p:IsA("BasePart") then
-						p.Transparency = 0.5
-						p.CanCollide = false
-					end
-				end
-				targetCoin = nil
-			else
-				local desired = (targetCoin.Position - hrp.Position).Unit
-				local dVel = desired - forward
-				local steerAccel = dVel * STEER_SPRING
-				dirVel = (dirVel + steerAccel * dt) * math.exp(-STEER_DAMP * dt)
-				forward = (forward + dirVel * dt).Unit
-
-				local dLook = forward - hrp.CFrame.LookVector
-				local aLook = dLook * ROT_SPRING
-				rotVel = (rotVel + aLook * dt) * math.exp(-ROT_DAMP * dt)
-				local lookDir = (hrp.CFrame.LookVector + rotVel * dt).Unit
-
-				local newPos = hrp.Position + forward * MAX_SPEED * dt
-				hrp.CFrame = CFrame.new(newPos, newPos + lookDir)
-			end
-		end
-	end
-end
-
------------------------------------
--- NOCLIP
------------------------------------
-local NoclipConn
-NoclipConn = RunService.Stepped:Connect(function()
-	if player.Character then
-		for _, v in ipairs(player.Character:GetDescendants()) do
-			if v:IsA("BasePart") then
-				v.CanCollide = false
-			end
-		end
-	end
-end)
-
------------------------------------
--- CHARACTER INIT + RESPAWN
------------------------------------
-local function onCharacterAdded(char)
-	local humanoid = char:WaitForChild("Humanoid")
-	local hrp = char:WaitForChild("HumanoidRootPart")
-
-	workspace.Gravity = 0
-	humanoid.PlatformStand = true
-
-	-- Zero velocity after 0.5s
-	task.delay(0.5, function()
-		if hrp and hrp:IsDescendantOf(workspace) then
-			hrp.AssemblyLinearVelocity = Vector3.zero
-			hrp.AssemblyAngularVelocity = Vector3.zero
-		end
-	end)
-
-	-- Coin count listener
-	local function getHumanoid()
-		return char:FindFirstChildOfClass("Humanoid")
-	end
-
-	local coinsTextLabel = player:WaitForChild("PlayerGui")
-		:WaitForChild("MainGUI")
-		:WaitForChild("Game")
-		:WaitForChild("CoinBags")
-		:WaitForChild("Container")
-		:WaitForChild("BeachBall")
-		:WaitForChild("CurrencyFrame")
-		:WaitForChild("Icon")
-		:WaitForChild("Coins")
-
-	local function onTextChanged()
-		if tonumber(coinsTextLabel.Text) == 40 then
-			local hum = getHumanoid()
-			if hum then
-				hum.Health = 0
-			end
-		end
-	end
-
-	coinsTextLabel:GetPropertyChangedSignal("Text"):Connect(onTextChanged)
-	onTextChanged()
-
-	-- Begin movement logic
-	task.defer(function()
-		moveContinuously(char)
-	end)
-end
-
-if player.Character then
-	onCharacterAdded(player.Character)
-end
-player.CharacterAdded:Connect(onCharacterAdded)
-
--- LocalScript in StarterPlayer → StarterPlayerScripts
-
-local Players    = game:GetService("Players")
-local RunService = game:GetService("RunService")
-
-local player    = Players.LocalPlayer
-local ws        = workspace
-local terrain   = ws:FindFirstChildOfClass("Terrain")
-
--- Recognize map-models by any of these children
-local function isMapModel(m)
-    if not m:IsA("Model") then return false end
-    return m:FindFirstChild("Base")
-        or m:FindFirstChild("CoinContainer")
-        or m:FindFirstChild("CoinAreas")
-end
-
--- Inside a map-model: delete _all_ children except these two
-local function cleanMapModel(m)
-    for _, c in ipairs(m:GetChildren()) do
-        if c.Name ~= "CoinContainer" and c.Name ~= "CoinAreas" then
-            c:Destroy()
+    elseif not foundAnything then
+        -- Nothing logically safe found: gamble by teleporting to a random covered tile
+        local flagFolder = workspace:FindFirstChild("Flag")
+        local partsFolder2 = flagFolder and flagFolder:FindFirstChild("Parts")
+        if partsFolder2 then
+            local allParts = partsFolder2:GetChildren()
+            local candidates = {}
+            for _, p in ipairs(allParts) do
+                if not isCellOpen(p) and not processedParts[p] then
+                    table.insert(candidates, p)
+                end
+            end
+            if #candidates > 0 then
+                local pick = candidates[math.random(#candidates)]
+                if pick then
+                    -- allow pick while path-checking (though we're teleporting)
+                    if partsFolder2 then updatePillars(partsFolder2, nil) end
+                    teleportTo(pick)
+                    processedParts[pick] = true
+                end
+            end
         end
     end
 end
 
--- Full sweep of top-level Workspace
-local function sweepWorkspace()
-    for _, obj in ipairs(ws:GetChildren()) do
-        if obj == player.Character then
-            -- keep your avatar
-        elseif terrain and obj == terrain then
-            -- keep Terrain
-        elseif obj:IsA("Camera") then
-            -- keep the camera if parented here
-        elseif isMapModel(obj) then
-            -- map → only clean inside
-            cleanMapModel(obj)
-        else
-            obj:Destroy()
-        end
+-- PERSISTENCE & TOGGLE
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.KeyCode == TOGGLE_KEY then
+        ENABLED = not ENABLED
+        neighborCache = {}
+        processedParts = {}
+        -- when toggling on, rebuild pillars to match current board
+        local ff = workspace:FindFirstChild("Flag")
+        local partsFolder = ff and ff:FindFirstChild("Parts")
+        if partsFolder then updatePillars(partsFolder, nil) end
+        chatNotify("Solver " .. (ENABLED and "ON" or "OFF"))
     end
-end
-
--- Handle anything new appearing in Workspace
-local function onChildAdded(obj)
-    -- let sub‑children replicate
-    RunService.Heartbeat:Wait()
-
-    if obj == player.Character then
-        return
-    elseif terrain and obj == terrain then
-        return
-    elseif obj:IsA("Camera") then
-        return
-    elseif isMapModel(obj) then
-        cleanMapModel(obj)
-    else
-        obj:Destroy()
-    end
-end
-
--- Hook it all up
-
--- 1) run a sweep on each respawn
-player.CharacterAdded:Connect(function(char)
-    -- wait until character core parts exist
-    char:WaitForChild("HumanoidRootPart", 5)
-    sweepWorkspace()
 end)
 
--- 2) catch _any_ new Model/Part/etc in real time
-ws.ChildAdded:Connect(onChildAdded)
-
--- 3) if you’re already spawned (Play Solo), do an initial sweep
-if player.Character then
-    sweepWorkspace()
+-- Character Persistence Logic
+if player then
+    player.CharacterAdded:Connect(function(char)
+        isMoving = false
+        neighborCache = {}
+        processedParts = {}
+        local hum = char:WaitForChild("Humanoid")
+        hum.Died:Connect(function()
+            isMoving = false
+        end)
+    end)
 end
+
+-- Main Loop
+task.spawn(function()
+    while true do
+        local ok, err = pcall(runSolver)
+        if not ok then
+            warn("Solver Error: " .. tostring(err))
+        end
+        task.wait(0.05) -- a small tick to keep CPU low; you said no delays, but loop still needs a tick
+    end
+end)
+
+chatNotify("Safe-Walk Solver (pillars enabled) Loaded. Press 'U' to Toggle.")
