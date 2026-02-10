@@ -1,4 +1,4 @@
--- Safe-Walk Solver with invisible blocker pillars for unknown/mines
+-- Safe-Walk Solver with blockers that exclude solver-safe tiles
 -- Press U to toggle. No action delay by default.
 
 -- SETTINGS & STATE
@@ -36,10 +36,6 @@ local function chatNotify(msg)
             Font = Enum.Font.GothamBold
         })
     end)
-end
-
-local function safeColor(p, col)
-    pcall(function() p.Color = col end)
 end
 
 local function isCellOpen(part)
@@ -98,7 +94,7 @@ local function getSolverData()
     return numberData
 end
 
--- BLOCKER MANAGEMENT
+-- BLOCKER MANAGEMENT (now accepts allowPassSet to exclude safe tiles)
 local function ensureBlockerFor(part)
     if not part or not part.Parent then return end
     if blockers[part] and blockers[part].Parent then return end
@@ -137,8 +133,10 @@ local function clearAllBlockers()
     end
 end
 
-local function updateBlockers()
-    -- keep blockers for all unknown (covered) tiles and for tiles marked as mine (black)
+-- updateBlockers: blocks covered tiles and mines EXCEPT those in allowPassSet
+-- allowPassSet: map of parts which the solver considers safe / allowed to remain walkable
+local function updateBlockers(allowPassSet)
+    -- allowPassSet may be nil
     local flagFolder = workspace:FindFirstChild("Flag")
     local partsFolder = flagFolder and flagFolder:FindFirstChild("Parts")
     if not partsFolder then
@@ -150,16 +148,22 @@ local function updateBlockers()
     local keep = {}
 
     for _, p in ipairs(allParts) do
-        local covered = not isCellOpen(p)
-        local isMarkedMine = false
-        local ok, val = pcall(function() return p.Color end)
-        if ok and val then
-            isMarkedMine = (val == Color3.new(0,0,0))
-        end
+        if not p or not p.Parent then
+            -- skip invalid
+        else
+            local covered = not isCellOpen(p)
+            local ok, val = pcall(function() return p.Color end)
+            local isMarkedMine = (ok and val and val == Color3.new(0,0,0))
 
-        if covered or isMarkedMine then
-            ensureBlockerFor(p)
-            keep[p] = true
+            -- don't place a blocker if part is in allowPassSet (solver-safe) or already processed
+            local allowed = false
+            if allowPassSet and allowPassSet[p] then allowed = true end
+            if processedParts[p] then allowed = true end
+
+            if (covered or isMarkedMine) and (not allowed) then
+                ensureBlockerFor(p)
+                keep[p] = true
+            end
         end
     end
 
@@ -182,18 +186,19 @@ local function computePathLengthFromWaypoints(waypoints)
 end
 
 local function pathIsWalkable(startPos, endPos, maxLen)
-    local path = PathfindingService:CreatePath({
-        AgentRadius = 2,
-        AgentHeight = 5,
-        AgentCanJump = true,
-        AgentWalkableTypes = { Enum.Material.Grass, Enum.Material.Concrete, Enum.Material.SmoothPlastic, Enum.Material.Metal }
-    })
-    local ok, err = pcall(function()
+    local ok, pathOrErr = pcall(function()
+        local path = PathfindingService:CreatePath({
+            AgentRadius = 2,
+            AgentHeight = 5,
+            AgentCanJump = true
+        })
         path:ComputeAsync(startPos, endPos)
+        return path
     end)
-    if not ok then
+    if not ok or not pathOrErr then
         return false, nil
     end
+    local path = pathOrErr
     if path.Status ~= Enum.PathStatus.Success then
         return false, nil
     end
@@ -218,9 +223,8 @@ local function safeWalkTo(targetPart)
     local successMove = false
 
     hum:MoveTo(targetPart.Position)
-    -- Wait either until MoveToFinished or a short timeout (without pausing the entire script indefinitely)
-    local ok, moved = pcall(function() return hum.MoveToFinished:Wait() end)
-    task.wait(ACTION_DELAY) -- zero if you requested no delay
+    local ok, _ = pcall(function() hum.MoveToFinished:Wait() end)
+    task.wait(ACTION_DELAY) -- zero if requested
 
     if root and (root.Position - targetPart.Position).Magnitude <= ((targetPart.Size and math.max(targetPart.Size.X, targetPart.Size.Z) or 3) * 1.5) then
         successMove = true
@@ -245,9 +249,6 @@ end
 -- MAIN SOLVER LOGIC
 local function runSolver()
     if not ENABLED or isMoving then return end
-
-    -- keep blockers in sync with unknown/mines before planning paths
-    updateBlockers()
 
     local data = getSolverData()
     local safeQueue = {}
@@ -309,7 +310,7 @@ local function runSolver()
         end
     end
 
-    -- remove duplicates and ensure candidates are still covered
+    -- dedupe safeQueue and only keep still-covered tiles
     local uniq = {}
     local uniqueQueue = {}
     for _, p in ipairs(safeQueue) do
@@ -318,6 +319,18 @@ local function runSolver()
             uniqueQueue[#uniqueQueue + 1] = p
         end
     end
+
+    -- Build allowPassSet: solver-safe tiles + already processed tiles (so we don't block them)
+    local allowPassSet = {}
+    for _, p in ipairs(uniqueQueue) do
+        allowPassSet[p] = true
+    end
+    for p, _ in pairs(processedParts) do
+        allowPassSet[p] = true
+    end
+
+    -- Now update blockers, excluding solver-safe tiles
+    updateBlockers(allowPassSet)
 
     -- If there are safe tiles, try to walk to the nearest walkable one.
     if #uniqueQueue > 0 then
@@ -339,21 +352,11 @@ local function runSolver()
             else
                 local canWalk = false
                 if playerPos then
-                    local ok, length = pcall(function()
-                        return pathIsWalkable(playerPos, target.Position, WALK_MAX_PATH_LENGTH)
-                    end)
-                    if ok and type(length) == "number" then
-                        -- when pcall returns (true, length) length will be number (we wrapped incorrectly),
-                        -- but our pathIsWalkable returns (bool, length). Let's call it directly for clarity:
-                        local successWalkable, pathLen = pathIsWalkable(playerPos, target.Position, WALK_MAX_PATH_LENGTH)
-                        if successWalkable then
-                            canWalk = true
-                        else
-                            canWalk = false
-                        end
+                    local successWalkable, _ = pathIsWalkable(playerPos, target.Position, WALK_MAX_PATH_LENGTH)
+                    if successWalkable then
+                        canWalk = true
                     else
-                        local successWalkable, pathLen = pathIsWalkable(playerPos, target.Position, WALK_MAX_PATH_LENGTH)
-                        if successWalkable then canWalk = true else canWalk = false end
+                        canWalk = false
                     end
                 end
 
