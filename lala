@@ -1,16 +1,20 @@
--- Walk-only Minesweeper solver (updated)
--- Changes: click delay 0.15s, flag radius 15, fallback path search to avoid "stops unless you move".
--- Toggle with U.
+-- Walk-only Minesweeper solver (tuned fixes)
+-- - Flag placement/removal uses FLAG_PLACE_RANGE
+-- - Click delay added (CLICK_DELAY)
+-- - Reduced jitter with ACTION_COOLDOWN and TEMP_BLOCK_DURATION
+-- Toggle with U
 
 -- =============== TUNABLES =================
 local TOGGLE_KEY = Enum.KeyCode.U
 local ACTION_DELAY = 0          -- pause after arriving on tile
+local ACTION_COOLDOWN = 0.20    -- small cooldown after any action to reduce jitter
 local WALK_MAX_PATH_LENGTH = 40 -- primary max allowed path length (studs)
-local FALLBACK_MAX_PATH = 200   -- if primary fails, accept paths <= this length
+local FALLBACK_MAX_PATH = 200   -- allowed fallback path length
 local WAYPOINT_TIMEOUT = 2      -- seconds allowed to reach each waypoint
 local PILLAR_SIZE = Vector3.new(6, 100, 6)
-local FLAG_PLACE_RANGE = 15     -- radius to place/remove flags
+local FLAG_PLACE_RANGE = 15     -- radius to place/remove flags (same for both)
 local CLICK_DELAY = 0.15        -- delay after firing a click detector
+local TEMP_BLOCK_DURATION = 1.0 -- seconds to skip a target after failed walking attempt
 -- ==========================================
 
 local RunService = game:GetService("RunService")
@@ -20,31 +24,17 @@ local UserInputService = game:GetService("UserInputService")
 local StarterGui = game:GetService("StarterGui")
 local player = Players.LocalPlayer
 
--- Original solver state & small helpers (kept intact)
-local config = {
-    TotalMines = 20,
-    DistanceWeight = 0.1,
-    EdgePenalty = 0.05,
-    Debug = false
-}
-
-local state = {
-    cells = {
-        grid = {},
-        numbered = {},
-        toFlag = {},
-        toClear = {}
-    },
-    grid = { w = 0, h = 0 },
-    lastPartCount = -1,
-    lastNumberedCount = 0
-}
-
+-- Original solver state & helpers preserved
+local config = { TotalMines = 20, DistanceWeight = 0.1, EdgePenalty = 0.05, Debug = false }
+local state = { cells = { grid = {}, numbered = {}, toFlag = {}, toClear = {} }, grid = { w = 0, h = 0 }, lastPartCount = -1, lastNumberedCount = 0 }
 local abs, floor, huge = math.abs, math.floor, math.huge
 local tsort = table.sort
 
 local neighborCache = {}
 local flaggedDebounce = {}
+local lastActionTime = 0
+local tempBlocked = {}      -- part -> unblockTime
+local isMoving = false
 
 local function chatNotify(msg)
     pcall(function()
@@ -74,14 +64,13 @@ local function isCellOpen(part)
 end
 
 --------------------------------------------------------------------------------
--- Grid & logic (preserved from your original)
+-- Grid & original logic (kept intact)
 --------------------------------------------------------------------------------
 
 local function clusterAndAverage(values, maxDiff)
-    local clusters = {}
-    local n = #values
+    local clusters, n = {}, #values
     if n == 0 then return clusters end
-    local current = values[1]; local count = 1
+    local current, count = values[1], 1
     for i = 2, n do
         local v = values[i]
         if abs(v - current) <= maxDiff then
@@ -89,7 +78,7 @@ local function clusterAndAverage(values, maxDiff)
             current = current + (v - current) / count
         else
             table.insert(clusters, current)
-            current = v; count = 1
+            current, count = v, 1
         end
     end
     table.insert(clusters, current)
@@ -111,7 +100,7 @@ local function estimateSpacing(coords)
 end
 
 local function findClosestIndex(target, sorted)
-    local bestIdx = 1; local bestDist = huge
+    local bestIdx, bestDist = 1, huge
     for i = 1, #sorted do
         local dist = abs(target - sorted[i])
         if dist < bestDist then bestDist, bestIdx = dist, i end
@@ -125,10 +114,7 @@ local function rebuildGridFromParts(folder)
     local parts = folder:GetChildren()
     if #parts == 0 then return end
     local allPositions = {}; local sumY = 0
-    for _, part in ipairs(parts) do
-        table.insert(allPositions, { part = part, pos = part.Position })
-        sumY = sumY + part.Position.Y
-    end
+    for _, part in ipairs(parts) do table.insert(allPositions, { part = part, pos = part.Position }); sumY = sumY + part.Position.Y end
 
     local xs, zs = {}, {}
     for _, d in ipairs(allPositions) do xs[#xs+1] = d.pos.X; zs[#zs+1] = d.pos.Z end
@@ -146,21 +132,16 @@ local function rebuildGridFromParts(folder)
     for x = 0, state.grid.w - 1 do
         state.cells.grid[x] = {}
         for z = 0, state.grid.h - 1 do
-            state.cells.grid[x][z] = {
-                ix = x, iz = z,
-                pos = Vector3.new(uniqueX[x+1], avgY, uniqueZ[z+1]),
-                part = nil, state = "unknown", number = nil, covered = true, neigh = nil
-            }
+            state.cells.grid[x][z] = { ix = x, iz = z, pos = Vector3.new(uniqueX[x+1], avgY, uniqueZ[z+1]), part = nil, state = "unknown", number = nil, covered = true, neigh = nil }
         end
     end
 
     for _, data in ipairs(allPositions) do
-        local pos = data.pos; local part = data.part
+        local pos, part = data.pos, data.part
         local xIdx = findClosestIndex(pos.X, uniqueX)
         local zIdx = findClosestIndex(pos.Z, uniqueZ)
         local cell = state.cells.grid[xIdx][zIdx]
-        if not cell.part then
-            cell.part = part; cell.pos = pos
+        if not cell.part then cell.part = part; cell.pos = pos
         else
             local currDist = (cell.part.Position - Vector3.new(uniqueX[xIdx+1], cell.part.Position.Y, uniqueZ[zIdx+1])).Magnitude
             local newDist = (pos - Vector3.new(uniqueX[xIdx+1], pos.Y, uniqueZ[zIdx+1])).Magnitude
@@ -170,18 +151,13 @@ local function rebuildGridFromParts(folder)
 
     for z = 0, state.grid.h - 1 do
         for x = 0, state.grid.w - 1 do
-            local cell = state.cells.grid[x][z]
-            local neighbors = {}
-            for dz = -1, 1 do
-                for dx = -1, 1 do
-                    if not (dx == 0 and dz == 0) then
-                        local nx, nz = x + dx, z + dz
-                        if nx >= 0 and nx < state.grid.w and nz >= 0 and nz < state.grid.h then
-                            neighbors[#neighbors + 1] = state.cells.grid[nx][nz]
-                        end
-                    end
+            local cell, neighbors = state.cells.grid[x][z], {}
+            for dz = -1, 1 do for dx = -1, 1 do
+                if not (dx == 0 and dz == 0) then
+                    local nx, nz = x + dx, z + dz
+                    if nx >= 0 and nx < state.grid.w and nz >= 0 and nz < state.grid.h then neighbors[#neighbors + 1] = state.cells.grid[nx][nz] end
                 end
-            end
+            end end
             cell.neigh = neighbors
         end
     end
@@ -190,7 +166,6 @@ end
 local function updateCellStates(folder)
     state.cells.numbered = {}
     if state.grid.w == 0 then return end
-
     for x = 0, state.grid.w - 1 do
         local column = state.cells.grid[x]
         if column then
@@ -208,9 +183,7 @@ local function updateCellStates(folder)
                     local numberGui = cell.part:FindFirstChild("NumberGui")
                     if numberGui then
                         local label = numberGui:FindFirstChild("TextLabel")
-                        if label and isNumber(label.Text) then
-                            cell.number = tonumber(label.Text); cell.covered = false
-                        end
+                        if label and isNumber(label.Text) then cell.number = tonumber(label.Text); cell.covered = false end
                     end
                     local color = cell.color
                     local hasGui = cell.part:FindFirstChild("NumberGui") ~= nil
@@ -235,7 +208,7 @@ local function updateCellStates(folder)
     end
 end
 
--- Deduction helpers (preserved)
+-- Deduction helpers from original (kept)
 local function getUnknownNeighborsExcluding(cell, flaggedSet, safeSet)
     local result = {}
     for _, n in ipairs(cell.neigh) do
@@ -248,19 +221,15 @@ end
 
 local function countRemainingMines(cell, flaggedSet)
     local remaining = cell.number or 0
-    for _, n in ipairs(cell.neigh) do
-        if flaggedSet[n] or n.state == "flagged" then remaining = remaining - 1 end
-    end
+    for _, n in ipairs(cell.neigh) do if flaggedSet[n] or n.state == "flagged" then remaining = remaining - 1 end end
     return remaining
 end
 
 local function applySimpleDeductionRule(cellA, cellB, unknownsA, unknownsB, flaggedSet, safeSet)
-    local intersection, onlyA, onlyB = {}, {}, {}
-    local setA = {}
+    local setA, intersection = {}, {}
     for _, u in ipairs(unknownsA) do setA[u] = true end
-    for _, u in ipairs(unknownsB) do
-        if setA[u] then table.insert(intersection, u); setA[u] = nil else table.insert(onlyB, u) end
-    end
+    local onlyA, onlyB = {}, {}
+    for _, u in ipairs(unknownsB) do if setA[u] then table.insert(intersection, u); setA[u] = nil else table.insert(onlyB, u) end end
     for u in pairs(setA) do table.insert(onlyA, u) end
 
     local minesA = countRemainingMines(cellA, flaggedSet)
@@ -271,7 +240,6 @@ local function applySimpleDeductionRule(cellA, cellB, unknownsA, unknownsB, flag
         if diff == 0 then for _, u in ipairs(onlyB) do safeSet[u] = true end
         elseif diff == #onlyB then for _, u in ipairs(onlyB) do flaggedSet[u] = true end end
     end
-
     if #onlyB == 0 and #onlyA > 0 then
         local diff = minesA - minesB
         if diff == 0 then for _, u in ipairs(onlyA) do safeSet[u] = true end
@@ -280,26 +248,21 @@ local function applySimpleDeductionRule(cellA, cellB, unknownsA, unknownsB, flag
 end
 
 local function checkAdjacentNumberedCells(flaggedSet, safeSet)
-    local numbered = state.cells.numbered
-    local grid = state.cells.grid
+    local numbered, grid = state.cells.numbered, state.cells.grid
     for _, cell in ipairs(numbered) do
-        for dz = -1, 1 do
-            for dx = -1, 1 do
-                if not (dx == 0 and dz == 0) then
-                    local nx, nz = cell.ix + dx, cell.iz + dz
-                    if nx >= 0 and nx < state.grid.w and nz >= 0 and nz < state.grid.h then
-                        local adj = grid[nx][nz]
-                        if adj and adj.state == "number" then
-                            local unknownsThis = getUnknownNeighborsExcluding(cell, flaggedSet, safeSet)
-                            local unknownsAdj = getUnknownNeighborsExcluding(adj, flaggedSet, safeSet)
-                            if #unknownsThis > 0 and #unknownsAdj > 0 then
-                                applySimpleDeductionRule(cell, adj, unknownsThis, unknownsAdj, flaggedSet, safeSet)
-                            end
-                        end
+        for dz = -1, 1 do for dx = -1, 1 do
+            if not (dx == 0 and dz == 0) then
+                local nx, nz = cell.ix + dx, cell.iz + dz
+                if nx >= 0 and nx < state.grid.w and nz >= 0 and nz < state.grid.h then
+                    local adj = grid[nx][nz]
+                    if adj and adj.state == "number" then
+                        local unknownsThis = getUnknownNeighborsExcluding(cell, flaggedSet, safeSet)
+                        local unknownsAdj = getUnknownNeighborsExcluding(adj, flaggedSet, safeSet)
+                        if #unknownsThis > 0 and #unknownsAdj > 0 then applySimpleDeductionRule(cell, adj, unknownsThis, unknownsAdj, flaggedSet, safeSet) end
                     end
                 end
             end
-        end
+        end end
     end
 end
 
@@ -323,22 +286,16 @@ local function updateLogic()
     while changed and iterations < 64 do
         changed = false; iterations = iterations + 1
         for _, cell in ipairs(numbered) do
-            local unknowns = {}; local flagCount = 0
+            local unknowns, flagCount = {}, 0
             for _, n in ipairs(cell.neigh) do
                 if knownFlags[n] or n.state == "flagged" then flagCount = flagCount + 1
-                elseif not state.cells.toClear[n] and not (n.state == "number" or n.state == "flagged") and n.covered ~= false then
-                    unknowns[#unknowns + 1] = n
-                end
+                elseif not state.cells.toClear[n] and not (n.state == "number" or n.state == "flagged") and n.covered ~= false then unknowns[#unknowns + 1] = n end
             end
             local remaining = (cell.number or 0) - flagCount
             if remaining > 0 and remaining == #unknowns then
-                for _, u in ipairs(unknowns) do
-                    if not knownFlags[u] then knownFlags[u] = true; changed = true end
-                end
+                for _, u in ipairs(unknowns) do if not knownFlags[u] then knownFlags[u] = true; changed = true end end
             elseif remaining == 0 and #unknowns > 0 then
-                for _, u in ipairs(unknowns) do
-                    if not state.cells.toClear[u] then state.cells.toClear[u] = true; changed = true end
-                end
+                for _, u in ipairs(unknowns) do if not state.cells.toClear[u] then state.cells.toClear[u] = true; changed = true end end
             end
         end
         checkAdjacentNumberedCells(knownFlags, state.cells.toClear)
@@ -347,7 +304,7 @@ local function updateLogic()
 end
 
 --------------------------------------------------------------------------------
--- Movement, blockers and flagging
+-- Movement, blockers and flagging (improved)
 --------------------------------------------------------------------------------
 
 local processedParts = {} -- part -> true visited
@@ -358,7 +315,7 @@ if not blockerFolder then blockerFolder = Instance.new("Folder"); blockerFolder.
 local function ensureBlockerFor(part)
     if not part or not part.Parent then return end
     if blockersMap[part] and blockersMap[part].Parent then return end
-    if hasFlagChild(part) then return end -- flagged tiles are walkable
+    if hasFlagChild(part) then return end
     local b = Instance.new("Part")
     b.Name = "SolverBlocker"; b.Size = PILLAR_SIZE; b.Anchored = true
     b.CanCollide = true; b.CanQuery = false; b.CanTouch = false; b.CastShadow = false
@@ -395,10 +352,7 @@ local function updateBlockers(allowPassParts)
             if allowPassParts and allowPassParts[p] then allowed = true end
             if processedParts[p] then allowed = true end
             if hasFlagChild(p) then allowed = true end
-            if (covered or isMarkedMine) and not allowed then
-                ensureBlockerFor(p)
-                keep[p] = true
-            end
+            if (covered or isMarkedMine) and not allowed then ensureBlockerFor(p); keep[p] = true end
         end
     end
 
@@ -407,7 +361,7 @@ local function updateBlockers(allowPassParts)
     end
 end
 
--- path helpers (unchanged) with fallback handling later
+-- path helpers with fallback
 local function computePath(startPos, endPos, maxLen)
     local ok, pathOrErr = pcall(function()
         local path = PathfindingService:CreatePath({ AgentRadius = 2, AgentHeight = 5, AgentCanJump = true })
@@ -460,11 +414,13 @@ local function placeFlagIfNeeded(part)
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if not root then return false end
     if (root.Position - part.Position).Magnitude > FLAG_PLACE_RANGE then return false end
-    if flaggedDebounce[part] and tick() - flaggedDebounce[part] < CLICK_DELAY then return false end
+    local now = tick()
+    if flaggedDebounce[part] and now - flaggedDebounce[part] < CLICK_DELAY then return false end
     local cd = findClickDetector(part)
     if cd then
         pcall(function() fireclickdetector(cd) end)
-        flaggedDebounce[part] = tick()
+        flaggedDebounce[part] = now
+        lastActionTime = now
         task.wait(CLICK_DELAY)
         return true
     end
@@ -478,19 +434,21 @@ local function removeFlagIfUnwanted(part)
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if not root then return false end
     if (root.Position - part.Position).Magnitude > FLAG_PLACE_RANGE then return false end
-    if flaggedDebounce[part] and tick() - flaggedDebounce[part] < CLICK_DELAY then return false end
+    local now = tick()
+    if flaggedDebounce[part] and now - flaggedDebounce[part] < CLICK_DELAY then return false end
     local cd = findClickDetector(part)
     if cd then
         pcall(function() fireclickdetector(cd) end)
-        flaggedDebounce[part] = tick()
+        flaggedDebounce[part] = now
+        lastActionTime = now
         task.wait(CLICK_DELAY)
         return true
     else
-        -- fallback destroy scripted flag object if present
         for _, c in ipairs(part:GetChildren()) do
             if c.Name:sub(1,4) == "Flag" then pcall(function() c:Destroy() end) end
         end
-        flaggedDebounce[part] = tick()
+        flaggedDebounce[part] = now
+        lastActionTime = now
         task.wait(CLICK_DELAY)
         return true
     end
@@ -498,48 +456,50 @@ end
 
 local function tryWalkToPart(targetPart)
     if not targetPart or not targetPart.Parent then return false end
+    if tempBlocked[targetPart] and tick() < tempBlocked[targetPart] then return false end
     local char = player.Character
     if not char then return false end
     local humanoid = char:FindFirstChild("Humanoid")
     local root = char:FindFirstChild("HumanoidRootPart")
     if not humanoid or not root or isMoving then return false end
 
-    -- First try primary short-path test
     local startPos = root.Position
+    -- primary short-path
     local success, pathObj, length = computePath(startPos, targetPart.Position, WALK_MAX_PATH_LENGTH)
-    -- If short path available, follow it
     if success and pathObj then
         isMoving = true
         local ok = followPathWaypoints(humanoid, root, pathObj)
-        task.wait(ACTION_DELAY)
         isMoving = false
+        lastActionTime = tick()
         if ok and (root.Position - targetPart.Position).Magnitude <= ((targetPart.Size and math.max(targetPart.Size.X, targetPart.Size.Z) or 3) * 1.5) then
             return true
         else
+            tempBlocked[targetPart] = tick() + TEMP_BLOCK_DURATION
             return false
         end
     end
 
-    -- Primary failed — attempt fallback full path (no cap) and accept it if length <= FALLBACK_MAX_PATH
+    -- fallback full path check with length cap
     local okFull, fullPath, fullLen = computePath(startPos, targetPart.Position, nil)
     if okFull and fullPath and type(fullLen) == "number" and fullLen <= FALLBACK_MAX_PATH then
         isMoving = true
         local ok2 = followPathWaypoints(humanoid, root, fullPath)
-        task.wait(ACTION_DELAY)
         isMoving = false
+        lastActionTime = tick()
         if ok2 and (root.Position - targetPart.Position).Magnitude <= ((targetPart.Size and math.max(targetPart.Size.X, targetPart.Size.Z) or 3) * 1.5) then
             return true
         else
+            tempBlocked[targetPart] = tick() + TEMP_BLOCK_DURATION
             return false
         end
     end
 
-    -- nothing reachable (or path too long)
+    tempBlocked[targetPart] = tick() + TEMP_BLOCK_DURATION
     return false
 end
 
 --------------------------------------------------------------------------------
--- Integration loop: runs original updateLogic + walking & flagging actions
+-- Integration loop: updateLogic (original), then actions (flagging/walking)
 --------------------------------------------------------------------------------
 
 local ENABLED = false
@@ -562,6 +522,8 @@ end
 
 local function processSolverActions()
     if not ENABLED or isMoving then return end
+    if tick() - lastActionTime < ACTION_COOLDOWN then return end
+
     local flagFolder = workspace:FindFirstChild("Flag")
     local partsFolder = flagFolder and flagFolder:FindFirstChild("Parts")
     if not partsFolder then return end
@@ -573,31 +535,31 @@ local function processSolverActions()
     for _, p in ipairs(allParts) do if isCellOpen(p) then hasRevealed = true; break end end
     if not hasRevealed then return end
 
-    -- updateLogic should have been run in RunService heartbeat before this call
+    -- Desired flags from logic
     local desiredFlagParts = flaggedPartsFromLogic()
 
-    -- 1) Place flags where logic requires (within range)
+    -- 1) Place flags required by logic (within FLAG_PLACE_RANGE)
     for partWanted, _ in pairs(desiredFlagParts) do
         if partWanted and partWanted.Parent and not hasFlagChild(partWanted) then
             if placeFlagIfNeeded(partWanted) then
-                removeBlockerFor(partWanted) -- ensure it's walkable now
+                removeBlockerFor(partWanted)
             end
         end
     end
 
-    -- 2) Remove physical flags that solver doesn't want (within range)
+    -- 2) Remove physical flags that solver doesn't want (within FLAG_PLACE_RANGE)
     for _, p in ipairs(allParts) do
         if hasFlagChild(p) and not desiredFlagParts[p] then
             removeFlagIfUnwanted(p)
         end
     end
 
-    -- 3) Build allowPassParts (safe by logic + flagged + processed)
+    -- 3) Build allowPassParts (safe by logic + desired flags + processed)
     local allowPassParts = {}
     local safeParts = safePartsFromLogic()
     for p, _ in pairs(safeParts) do allowPassParts[p] = true end
     for p, _ in pairs(processedParts) do allowPassParts[p] = true end
-    for _, p in ipairs(allParts) do if hasFlagChild(p) then allowPassParts[p] = true end end
+    for p, _ in pairs(desiredFlagParts) do allowPassParts[p] = true end
 
     -- 4) Update blockers excluding allowPassParts
     updateBlockers(allowPassParts)
@@ -605,7 +567,9 @@ local function processSolverActions()
     -- 5) Walk to nearest safe tile (toClear)
     local candidates = {}
     for p, _ in pairs(safeParts) do
-        if p and p.Parent and not processedParts[p] and not isCellOpen(p) then candidates[#candidates+1] = p end
+        if p and p.Parent and not processedParts[p] and not isCellOpen(p) and (not tempBlocked[p] or tick() >= tempBlocked[p]) then
+            candidates[#candidates+1] = p
+        end
     end
 
     if #candidates == 0 then return end
@@ -618,23 +582,24 @@ local function processSolverActions()
         table.sort(candidates, function(a,b) return (a.Position - playerPos).Magnitude < (b.Position - playerPos).Magnitude end)
     end
 
-    -- try to walk to candidates until one succeeds
+    -- try walking to candidates until one succeeds
     for _, targetPart in ipairs(candidates) do
         if processedParts[targetPart] then
         else
             local walked = tryWalkToPart(targetPart)
             if walked then
                 processedParts[targetPart] = true
+                lastActionTime = tick()
                 break
             else
-                -- couldn't reach this one; try next
+                -- mark as temp blocked already done in tryWalkToPart
             end
         end
     end
 end
 
 --------------------------------------------------------------------------------
--- RunService: rebuild/update logic then actions
+-- RunService: keep grid & logic updated then actions
 --------------------------------------------------------------------------------
 
 RunService.Heartbeat:Connect(function()
@@ -652,6 +617,7 @@ RunService.Heartbeat:Connect(function()
         state.cells.toFlag = {}
         state.cells.toClear = {}
         processedParts = {}
+        tempBlocked = {}
     end
 
     if state.grid.w == 0 or state.grid.h == 0 then return end
@@ -663,7 +629,6 @@ RunService.Heartbeat:Connect(function()
         updateLogic()
     end
 
-    -- now perform walking & flagging actions
     pcall(processSolverActions)
 end)
 
@@ -674,8 +639,9 @@ UserInputService.InputBegan:Connect(function(input, processed)
         ENABLED = not ENABLED
         neighborCache = {}
         processedParts = {}
+        tempBlocked = {}
         if not ENABLED then
-            for k, v in pairs(blockersMap) do if v and v.Parent then pcall(function() v:Destroy() end) end end
+            for k, v in pairs(blockersMap or {}) do if v and v.Parent then pcall(function() v:Destroy() end) end end
             blockersMap = {}
         end
         pcall(function() StarterGui:SetCore("ChatMakeSystemMessage", { Text = "[Solver] " .. (ENABLED and "ON" or "OFF"), Color = Color3.new(1,1,1) }) end)
@@ -688,8 +654,9 @@ if player then
         isMoving = false
         neighborCache = {}
         processedParts = {}
+        tempBlocked = {}
     end)
 end
 
-chatNotify("Walk-only solver updated: CLICK_DELAY="..CLICK_DELAY..", FLAG_RANGE="..FLAG_PLACE_RANGE..", FALLBACK_MAX_PATH="..FALLBACK_MAX_PATH)
+chatNotify("Walk-only solver tuned: CLICK_DELAY="..CLICK_DELAY..", FLAG_RANGE="..FLAG_PLACE_RANGE..", ACTION_COOLDOWN="..ACTION_COOLDOWN)
 print("Walk-only Minesweeper solver loaded. Press 'U' to toggle.")
