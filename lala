@@ -9,7 +9,7 @@ local FALLBACK_MAX_PATH = 200   -- if primary fails, accept paths <= this length
 local WAYPOINT_TIMEOUT = 2      -- seconds allowed to reach each waypoint
 local PILLAR_SIZE = Vector3.new(6, 100, 6)
 local FLAG_PLACE_RANGE = 15     -- radius to place/remove flags (same for both)
-local CLICK_DELAY = 0.15        -- delay after firing a click detector
+local CLICK_DELAY = 0.07        -- delay after firing a click detector
 -- ==========================================
 
 local RunService = game:GetService("RunService")
