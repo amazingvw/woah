@@ -9,6 +9,42 @@ local Lighting = game:GetService("Lighting")
 local localPlayer = Players.LocalPlayer
 
 ---------------------------------------------------------
+-- [CLEANUP] Disconnect previous run's connections & destroy old GUIs
+---------------------------------------------------------
+if _G._ActionUI_Cleanup then
+	_G._ActionUI_Cleanup()
+end
+
+local _trackedConnections = {}
+local function trackConn(conn)
+	table.insert(_trackedConnections, conn)
+	return conn
+end
+
+_G._ActionUI_Cleanup = function()
+	for _, conn in ipairs(_trackedConnections) do
+		pcall(function() conn:Disconnect() end)
+	end
+	_trackedConnections = {}
+
+	local pg = localPlayer:FindFirstChild("PlayerGui")
+	if pg then
+		for _, gui in ipairs(pg:GetChildren()) do
+			if gui.Name == "ActionUI" or gui.Name == "Toast" then
+				pcall(function() gui:Destroy() end)
+			end
+		end
+	end
+
+	for _, effect in ipairs(Lighting:GetChildren()) do
+		if effect:IsA("BlurEffect") then
+			pcall(function() effect:Destroy() end)
+		end
+	end
+end
+---------------------------------------------------------
+
+---------------------------------------------------------
 -- NOTIFICATION LIBRARY (BAKED IN)
 ---------------------------------------------------------
 local NotificationLib = {}
@@ -88,7 +124,7 @@ function NotificationLib.new(rawText, customConfig)
 	local TextLabel = Instance.new("TextLabel")
 
 	ScreenGui.Name = "Toast"
-	ScreenGui.ResetOnSpawn = false -- [PERSISTENCE] Toast survives respawn
+	ScreenGui.ResetOnSpawn = false
 	ScreenGui.Parent = localPlayer:WaitForChild("PlayerGui")
 
 	Frame.Parent = ScreenGui
@@ -292,7 +328,7 @@ end
 ---------------------------------------------------------
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "ActionUI"
-ScreenGui.ResetOnSpawn = false -- [PERSISTENCE] Main UI survives respawn
+ScreenGui.ResetOnSpawn = false
 ScreenGui.Parent = localPlayer:WaitForChild("PlayerGui")
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.IgnoreGuiInset = true 
@@ -491,7 +527,8 @@ for _, data in pairs(buttonData) do
 		end
 	end)
 
-	RunService.RenderStepped:Connect(function(dt)
+	-- [CLEANUP] Tracked so it gets disconnected if the script is re-executed
+	trackConn(RunService.RenderStepped:Connect(function(dt)
 		dt = math.min(dt, 0.05)
 
 		if isConfigMode and not isDragging then
@@ -535,7 +572,7 @@ for _, data in pairs(buttonData) do
 		end
 
 		ImageButton.Position = ImageButton.Position:Lerp(targetPosition, 15 * dt)
-	end)
+	end))
 
 	if data.Name == "Macro" then
 		local TOGGLE_RATE = 1/60
@@ -551,15 +588,13 @@ for _, data in pairs(buttonData) do
 			end
 		end)
 
-		-- [PERSISTENCE] On respawn: deactivate Macro and restore AutoRotate on the fresh character
-		localPlayer.CharacterAdded:Connect(function(newChar)
+		trackConn(localPlayer.CharacterAdded:Connect(function(newChar)
 			ImageButton:SetAttribute("IsActive", false)
 			isLockActive = false
 			timer = 0
 			local hum = newChar:WaitForChild("Humanoid", 5)
 			if hum then hum.AutoRotate = true end
 
-			-- [PERSISTENCE] Also close config mode if it was open during death
 			if isConfigMode then
 				isConfigMode = false
 				TweenService:Create(BGFader, TI, {BackgroundTransparency = 1}):Play()
@@ -571,9 +606,10 @@ for _, data in pairs(buttonData) do
 					activeConfigToast = nil
 				end
 			end
-		end)
+		end))
 
-		RunService.Heartbeat:Connect(function(dt)
+		-- [CLEANUP] Tracked so it gets disconnected if the script is re-executed
+		trackConn(RunService.Heartbeat:Connect(function(dt)
 			if not ImageButton:GetAttribute("IsActive") or isConfigMode then return end
 
 			local character = localPlayer.Character
@@ -595,7 +631,7 @@ for _, data in pairs(buttonData) do
 			else
 				humanoid.AutoRotate = true
 			end
-		end)
+		end))
 	end
 end
 
