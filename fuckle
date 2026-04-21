@@ -1,20 +1,20 @@
--- ActionUI Version 3.6 (Persistence & Respawn-Safe)
+-- Gui to Lua 
+-- Version: 3.5 (Notification Clamping & Multiplier Physics)
+
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
 local Lighting = game:GetService("Lighting")
-
 local localPlayer = Players.LocalPlayer
 
 ---------------------------------------------------------
 -- NOTIFICATION LIBRARY (BAKED IN)
 ---------------------------------------------------------
--- [Keeping existing NotificationLib logic from previous version...]
--- Note: I've kept the logic identical to your last request for the Lib.
 local NotificationLib = {}
 local ActiveToasts = {}
 local TOAST_SPACING = 45 
+
 local DEFAULTS = {
 	TENSION = 180, FRICTION = 24, STAGGER_DELAY = 0.015,
 	GLOBAL_START_SCALE = 0.5, GLOBAL_FINAL_SCALE = 1.0,
@@ -25,7 +25,9 @@ local DEFAULTS = {
 
 local function getCharMetadata(text)
 	local chars = {}
-	local currentTransparency, stack, i = 0, {}, 1
+	local currentTransparency = 0
+	local stack = {}
+	local i = 1
 	while i <= #text do
 		local char = text:sub(i, i)
 		if char == "<" then
@@ -33,16 +35,29 @@ local function getCharMetadata(text)
 			if not tagEnd then i += 1 continue end
 			local tag = text:sub(i, tagEnd)
 			local transMatch = tag:match('transparency%s*=%s*["\']([%d%.]+)["\']')
-			if transMatch then table.insert(stack, currentTransparency) currentTransparency = tonumber(transMatch)
-			elseif tag:find("^</font") and #stack > 0 then currentTransparency = table.remove(stack) end
+			if transMatch then
+				table.insert(stack, currentTransparency)
+				currentTransparency = tonumber(transMatch)
+			elseif tag:find("^</font") and #stack > 0 then
+				currentTransparency = table.remove(stack)
+			end
 			i = tagEnd + 1
 		else
 			local fullChar = text:match(utf8.charpattern, i)
-			if fullChar then i += #fullChar
+			if fullChar then
+				i += #fullChar
 				local nextChar = text:match(utf8.charpattern, i)
-				if nextChar then local cp = utf8.codepoint(nextChar) if cp >= 0xFE00 and cp <= 0xFE0F then fullChar ..= nextChar i += #nextChar end end
+				if nextChar then
+					local cp = utf8.codepoint(nextChar)
+					if cp >= 0xFE00 and cp <= 0xFE0F then
+						fullChar ..= nextChar
+						i += #nextChar
+					end
+				end
 				table.insert(chars, {char = fullChar, baseTrans = currentTransparency})
-			else i += 1 end
+			else
+				i += 1
+			end
 		end
 	end
 	return chars
@@ -50,22 +65,31 @@ end
 
 local function updateStackPositions()
 	local count = #ActiveToasts
-	for i, toast in ipairs(ActiveToasts) do toast:updateTargetY(DEFAULTS.Y_OFFSET - ((count - i) * TOAST_SPACING)) end
+	for i, toast in ipairs(ActiveToasts) do
+		local targetY = DEFAULTS.Y_OFFSET - ((count - i) * TOAST_SPACING)
+		toast:updateTargetY(targetY)
+	end
 end
 
 function NotificationLib.new(rawText, customConfig)
 	local cfg = setmetatable(customConfig or {}, {__index = DEFAULTS})
-	local self = {rawContent = rawText, count = 1, isHiding = false, lifeTime = 0, maxLife = 6}
-	
-	local ScreenGui = Instance.new("ScreenGui")
-	ScreenGui.Name = "Toast"
-	ScreenGui.Parent = localPlayer:WaitForChild("PlayerGui")
-	ScreenGui.ResetOnSpawn = false -- Ensure notifications don't vanish on death
+	local self = {}
 
+	self.rawContent = rawText
+	self.count = 1
+	self.isHiding = false
+	self.lifeTime = 0
+	self.maxLife = 6
+
+	local ScreenGui = Instance.new("ScreenGui")
 	local Frame = Instance.new("Frame")
 	local UICorner = Instance.new("UICorner")
 	local UIScale = Instance.new("UIScale")
 	local TextLabel = Instance.new("TextLabel")
+
+	ScreenGui.Name = "Toast"
+	ScreenGui.ResetOnSpawn = false -- [PERSISTENCE] Toast survives respawn
+	ScreenGui.Parent = localPlayer:WaitForChild("PlayerGui")
 
 	Frame.Parent = ScreenGui
 	Frame.AnchorPoint = Vector2.new(0.5, 1)
@@ -90,18 +114,26 @@ function NotificationLib.new(rawText, customConfig)
 
 	local currentDisplayText = rawText
 	local charMetadata = getCharMetadata(currentDisplayText)
-	local charSprings, globalSpring, ySpring = {}, {pos = 0, vel = 0}, {pos = cfg.Y_OFFSET, vel = 0, target = cfg.Y_OFFSET}
+	local charSprings = {}
+	local globalSpring = {pos = 0, vel = 0}
+	local ySpring = {pos = cfg.Y_OFFSET, vel = 0, target = cfg.Y_OFFSET}
+
 	for i = 1, #charMetadata do charSprings[i] = {pos = 0, vel = 0} end
 	local activeConnection = nil
 
 	function self:updateTargetY(newY) ySpring.target = newY end
+
 	function self:increment()
 		self.count += 1
 		self.lifeTime = 0
+
 		local suffix = string.format(" <font transparency='0.25'><i><b>(%dx)</b></i></font>", self.count)
 		currentDisplayText = self.rawContent .. suffix
+
 		local newMeta = getCharMetadata(currentDisplayText)
-		for i = #charMetadata + 1, #newMeta do charSprings[i] = {pos = 0, vel = 0} end
+		for i = #charMetadata + 1, #newMeta do
+			charSprings[i] = {pos = 0, vel = 0}
+		end
 		charMetadata = newMeta
 	end
 
@@ -109,32 +141,64 @@ function NotificationLib.new(rawText, customConfig)
 		table.insert(ActiveToasts, self)
 		updateStackPositions()
 		local startTime = os.clock()
+
 		activeConnection = RunService.RenderStepped:Connect(function(dt)
 			dt = math.min(dt, 0.05)
-			if not self.isHiding then self.lifeTime += dt if self.lifeTime >= self.maxLife then self:hide() end end
+			local now = os.clock()
+
+			if not self.isHiding then
+				self.lifeTime += dt
+				if self.lifeTime >= self.maxLife then
+					self:hide()
+				end
+			end
+
 			local gForce = cfg.TENSION * (1 - globalSpring.pos)
 			globalSpring.vel = globalSpring.vel + (gForce - cfg.FRICTION * globalSpring.vel) * dt
-			globalSpring.pos = globalSpring.pos + globalSpring.vel * dt
+			if math.abs(1 - globalSpring.pos) > 0.005 or math.abs(globalSpring.vel) > 0.1 then
+				globalSpring.pos = globalSpring.pos + globalSpring.vel * dt
+			else
+				globalSpring.pos, globalSpring.vel = 1, 0
+			end
+
 			local yForce = cfg.TENSION * (ySpring.target - ySpring.pos)
 			ySpring.vel = ySpring.vel + (yForce - cfg.FRICTION * ySpring.vel) * dt
-			ySpring.pos = ySpring.pos + ySpring.vel * dt
+			if math.abs(ySpring.target - ySpring.pos) > 0.05 or math.abs(ySpring.vel) > 0.5 then
+				ySpring.pos = ySpring.pos + ySpring.vel * dt
+			else
+				ySpring.pos, ySpring.vel = ySpring.target, 0
+			end
+
 			UIScale.Scale = cfg.GLOBAL_START_SCALE + (globalSpring.pos * (cfg.GLOBAL_FINAL_SCALE - cfg.GLOBAL_START_SCALE))
 			Frame.BackgroundTransparency = math.clamp(1 - (globalSpring.pos * (1 - cfg.FRAME_TARGET_TRANS)), cfg.FRAME_TARGET_TRANS, 1)
 			Frame.Position = UDim2.new(0.5, 0, 1, math.round(ySpring.pos))
-			local builtString, charIndex, textIndex = "", 1, 1
-			while textIndex <= #currentDisplayText do
+
+			local builtString = ""
+			local charIndex, textIndex = 1, 1
+			local rawTextLength = #currentDisplayText
+
+			while textIndex <= rawTextLength do
 				local byte = currentDisplayText:sub(textIndex, textIndex)
-				if byte == "<" then local tagEnd = currentDisplayText:find(">", textIndex) builtString ..= currentDisplayText:sub(textIndex, tagEnd) textIndex = tagEnd + 1
+				if byte == "<" then
+					local tagEnd = currentDisplayText:find(">", textIndex)
+					builtString ..= currentDisplayText:sub(textIndex, tagEnd)
+					textIndex = tagEnd + 1
 				else
-					local data, meta = charSprings[charIndex], charMetadata[charIndex]
+					local data = charSprings[charIndex]
+					local meta = charMetadata[charIndex]
+
 					local delay = (charIndex <= #getCharMetadata(self.rawContent)) and (charIndex - 1) * cfg.STAGGER_DELAY or 0
-					if os.clock() >= startTime + delay then
+
+					if now >= startTime + delay then
 						local cForce = cfg.TENSION * (1 - data.pos)
 						data.vel = data.vel + (cForce - cfg.FRICTION * data.vel) * dt
 						data.pos = data.pos + data.vel * dt
 					end
-					builtString ..= string.format('<font size="%d" transparency="%.3f">%s</font>', math.max(0, math.floor(data.pos * cfg.TARGET_FONT_SIZE + 0.5)), 1 - (math.clamp(data.pos, 0, 1) * (1 - meta.baseTrans)), meta.char)
-					textIndex += #meta.char charIndex += 1
+
+					local size = math.floor(data.pos * cfg.TARGET_FONT_SIZE + 0.5)
+					local trans = 1 - (math.clamp(data.pos, 0, 1) * (1 - meta.baseTrans))
+					builtString ..= string.format('<font size="%d" transparency="%.3f">%s</font>', math.max(0, size), math.clamp(trans, 0, 1), meta.char)
+					textIndex += #meta.char; charIndex += 1
 				end
 			end
 			TextLabel.Text = builtString
@@ -146,38 +210,92 @@ function NotificationLib.new(rawText, customConfig)
 	function self:hide()
 		if self.isHiding then return end
 		self.isHiding = true
-		for i, v in ipairs(ActiveToasts) do if v == self then table.remove(ActiveToasts, i) break end end
+
+		for i, v in ipairs(ActiveToasts) do
+			if v == self then table.remove(ActiveToasts, i) break end
+		end
 		updateStackPositions()
 		if activeConnection then activeConnection:Disconnect() end
+		local startTime = os.clock()
+
 		activeConnection = RunService.RenderStepped:Connect(function(dt)
 			dt = math.min(dt, 0.05)
+			local now = os.clock()
+			local stillVisible = false
+
 			local gForce = cfg.TENSION * (0 - globalSpring.pos)
 			globalSpring.vel = globalSpring.vel + (gForce - cfg.FRICTION * globalSpring.vel) * dt
 			globalSpring.pos = globalSpring.pos + globalSpring.vel * dt
+
+			local currentFrameAlpha = math.clamp(1 - (globalSpring.pos * (1 - cfg.FRAME_TARGET_TRANS)), cfg.FRAME_TARGET_TRANS, 1)
+			Frame.BackgroundTransparency = currentFrameAlpha
+
 			local yForce = cfg.TENSION * (ySpring.target - ySpring.pos)
 			ySpring.vel = ySpring.vel + (yForce - cfg.FRICTION * ySpring.vel) * dt
 			ySpring.pos = ySpring.pos + ySpring.vel * dt
 			Frame.Position = UDim2.new(0.5, 0, 1, math.round(ySpring.pos))
-			if globalSpring.pos <= 0.005 then activeConnection:Disconnect() ScreenGui:Destroy() end
+
+			if globalSpring.pos > 0.005 then stillVisible = true end
+
+			local builtString = ""
+			local charIndex, textIndex = 1, 1
+			while textIndex <= #currentDisplayText do
+				local byte = currentDisplayText:sub(textIndex, textIndex)
+				if byte == "<" then
+					local tagEnd = currentDisplayText:find(">", textIndex)
+					builtString ..= currentDisplayText:sub(textIndex, tagEnd)
+					textIndex = tagEnd + 1
+				else
+					local data = charSprings[charIndex]
+					local meta = charMetadata[charIndex]
+					local delay = (#charMetadata - charIndex) * cfg.STAGGER_DELAY
+					if now >= startTime + delay then
+						local cForce = cfg.TENSION * (0 - data.pos)
+						data.vel = data.vel + (cForce - cfg.FRICTION * data.vel) * dt
+						data.pos = data.pos + data.vel * dt
+					end
+					local size = math.floor(data.pos * cfg.TARGET_FONT_SIZE + 0.5)
+					local charTargetAlpha = 1 - (math.clamp(data.pos, 0, 1) * (1 - meta.baseTrans))
+					local finalTrans = math.max(charTargetAlpha, currentFrameAlpha)
+					builtString ..= string.format('<font size="%d" transparency="%.3f">%s</font>', math.max(0, size), math.clamp(finalTrans, 0, 1), meta.char)
+					if data.pos > 0.005 then stillVisible = true end
+					textIndex += #meta.char; charIndex += 1
+				end
+			end
+			TextLabel.Text = builtString
+			Frame.Size = UDim2.new(0, math.max(cfg.MIN_WIDTH, TextLabel.TextBounds.X + cfg.HOLDER_PADDING), 0, 40)
+
+			if not stillVisible then
+				activeConnection:Disconnect()
+				ScreenGui:Destroy()
+			end
 		end)
 	end
 	return self
 end
 
 local function spawnToast(text, duration)
-	for _, toast in ipairs(ActiveToasts) do if toast.rawContent == text and not toast.isHiding then toast:increment() return end end
-	local t = NotificationLib.new(text) t.maxLife = duration or 6 t:show()
+	for _, toast in ipairs(ActiveToasts) do
+		if toast.rawContent == text and not toast.isHiding then
+			toast:increment()
+			return
+		end
+	end
+
+	local t = NotificationLib.new(text)
+	t.maxLife = duration or 6
+	t:show()
 end
 
 ---------------------------------------------------------
 -- MAIN GUI SETUP
 ---------------------------------------------------------
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "ActionUI_Persistent"
+ScreenGui.Name = "ActionUI"
+ScreenGui.ResetOnSpawn = false -- [PERSISTENCE] Main UI survives respawn
 ScreenGui.Parent = localPlayer:WaitForChild("PlayerGui")
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.IgnoreGuiInset = true 
-ScreenGui.ResetOnSpawn = false -- CRITICAL: UI stays when you die
 
 local BGFader = Instance.new("Frame")
 BGFader.Size = UDim2.new(1, 0, 1, 0)
@@ -197,132 +315,286 @@ local activeConfigToast = nil
 -- CONFIG BUTTON
 ---------------------------------------------------------
 local ConfigBtn = Instance.new("ImageButton")
-ConfigBtn.Parent, ConfigBtn.AnchorPoint, ConfigBtn.Position, ConfigBtn.Size = ScreenGui, Vector2.new(1, 0), UDim2.new(1, -16, 0, 12), UDim2.new(0, 44, 0, 44)
-ConfigBtn.BackgroundColor3, ConfigBtn.BackgroundTransparency, ConfigBtn.ZIndex = Color3.fromRGB(18, 18, 21), 0.08, 5
-Instance.new("UICorner", ConfigBtn).CornerRadius = UDim.new(1, 0)
+ConfigBtn.Name = "ConfigMode"
+ConfigBtn.Parent = ScreenGui
+ConfigBtn.AnchorPoint = Vector2.new(1, 0)
+ConfigBtn.Position = UDim2.new(1, -16, 0, 12)
+ConfigBtn.Size = UDim2.new(0, 44, 0, 44)
+ConfigBtn.BackgroundColor3 = Color3.fromRGB(18, 18, 21)
+ConfigBtn.BackgroundTransparency = 0.08
+ConfigBtn.AutoButtonColor = false
+ConfigBtn.ZIndex = 5
+
+local ConfigCorner = Instance.new("UICorner")
+ConfigCorner.CornerRadius = UDim.new(1, 0)
+ConfigCorner.Parent = ConfigBtn
 
 local ConfigIcon = Instance.new("ImageLabel")
-ConfigIcon.Parent, ConfigIcon.AnchorPoint, ConfigIcon.Position, ConfigIcon.Size = ConfigBtn, Vector2.new(0.5, 0.5), UDim2.new(0.5, 0, 0.5, 0), UDim2.new(0, 18, 0, 17)
-ConfigIcon.BackgroundTransparency, ConfigIcon.Image, ConfigIcon.ZIndex = 1, "rbxassetid://104642911681696", 6
-local ConfigIconScale = Instance.new("UIScale", ConfigIcon)
+ConfigIcon.Parent = ConfigBtn
+ConfigIcon.AnchorPoint = Vector2.new(0.5, 0.5)
+ConfigIcon.Position = UDim2.new(0.5, 0, 0.5, 0)
+ConfigIcon.Size = UDim2.new(0, 18, 0, 17)
+ConfigIcon.BackgroundTransparency = 1
+ConfigIcon.Image = "rbxassetid://104642911681696"
+ConfigIcon.ZIndex = 6
+
+local ConfigIconScale = Instance.new("UIScale")
+ConfigIconScale.Parent = ConfigIcon
+
+local TI = TweenInfo.new(0.35, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
 
 ConfigBtn.MouseButton1Click:Connect(function()
 	isConfigMode = not isConfigMode
-	local TI = TweenInfo.new(0.35, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+
 	if isConfigMode then
 		TweenService:Create(BGFader, TI, {BackgroundTransparency = 0.75}):Play()
 		TweenService:Create(ScreenBlur, TI, {Size = 14}):Play()
 		TweenService:Create(ConfigIconScale, TI, {Scale = 1.25}):Play()
 		TweenService:Create(ConfigIcon, TI, {ImageTransparency = 0.25}):Play()
+
 		activeConfigToast = NotificationLib.new("<font transparency='0.25'>Drag the</font> <font transparency='0.1'><font weight='semibold'>Buttons</font></font><font transparency='0.5'><font transparency='0.25'> to your desired placement</font><b>...</b></font>")
-		activeConfigToast.maxLife = 999999 activeConfigToast:show()
+		activeConfigToast.maxLife = 999999
+		activeConfigToast:show()
 	else
 		TweenService:Create(BGFader, TI, {BackgroundTransparency = 1}):Play()
 		TweenService:Create(ScreenBlur, TI, {Size = 0}):Play()
 		TweenService:Create(ConfigIconScale, TI, {Scale = 1}):Play()
 		TweenService:Create(ConfigIcon, TI, {ImageTransparency = 0}):Play()
-		if activeConfigToast then activeConfigToast:hide() activeConfigToast = nil end
+
+		if activeConfigToast then
+			activeConfigToast:hide()
+			activeConfigToast = nil
+		end
+
 		spawnToast("<font transparency='0.1'><font weight='semibold'>Buttons </font></font><font transparency='0.25'>updated</font><font transparency='0.5'><b>! </b></font>✅", 6)
 	end
 end)
 
+
 ---------------------------------------------------------
--- MAIN BUTTONS LOGIC
+-- MAIN BUTTONS (Emote / Macro)
 ---------------------------------------------------------
 local buttonData = {
 	{Name = "Emote", ImageId = "rbxassetid://91728455268947", DefaultPos = UDim2.new(0.5, -60, 0.5, 0)},
 	{Name = "Macro", ImageId = "rbxassetid://115106483868384", DefaultPos = UDim2.new(0.5, 60, 0.5, 0)}
 }
 
+local TENSION = 180
+local FRICTION = 24 
+
 for _, data in pairs(buttonData) do
 	local ImageButton = Instance.new("ImageButton")
-	ImageButton.Name, ImageButton.Parent, ImageButton.AnchorPoint, ImageButton.Position, ImageButton.Size = data.Name, ScreenGui, Vector2.new(0.5, 0.5), data.DefaultPos, UDim2.new(0, 50, 0, 50)
-	ImageButton.BackgroundTransparency, ImageButton.Image, ImageButton.ImageTransparency, ImageButton.ZIndex = 1, data.ImageId, 0.5, 2
+	ImageButton.Name = data.Name
+	ImageButton.Parent = ScreenGui
+	ImageButton.AnchorPoint = Vector2.new(0.5, 0.5)
+	ImageButton.BackgroundTransparency = 1
+	ImageButton.Position = data.DefaultPos
+	ImageButton.Size = UDim2.new(0, 50, 0, 50)
+	ImageButton.Image = data.ImageId
+	ImageButton.ImageTransparency = 0.5
+	ImageButton.AutoButtonColor = false
+	ImageButton.BorderSizePixel = 0
+	ImageButton.ZIndex = 2
 	ImageButton:SetAttribute("IsActive", false)
-	Instance.new("UICorner", ImageButton).CornerRadius = UDim.new(1, 0)
 
-	local InnerStroke = Instance.new("UIStroke", ImageButton)
-	InnerStroke.Thickness, InnerStroke.Color, InnerStroke.Transparency = 3, Color3.fromRGB(255, 255, 255), 0.75
-	
-	local OuterFrame = Instance.new("Frame", ImageButton)
-	OuterFrame.AnchorPoint, OuterFrame.Position, OuterFrame.Size, OuterFrame.BackgroundTransparency, OuterFrame.ZIndex = Vector2.new(0.5, 0.5), UDim2.new(0.5, 0, 0.5, 0), UDim2.new(1, 6, 1, 6), 1, 1
-	local OuterStroke = Instance.new("UIStroke", OuterFrame)
-	OuterStroke.Thickness, OuterStroke.Color, OuterStroke.Transparency = 3, Color3.fromRGB(0, 0, 0), 0.5
-	Instance.new("UICorner", OuterFrame).CornerRadius = UDim.new(1, 0)
+	local UICorner = Instance.new("UICorner")
+	UICorner.CornerRadius = UDim.new(1, 0)
+	UICorner.Parent = ImageButton
 
-	local spring, targetPosition, isDragging, dragOffset = {pos = 1, vel = 0, target = 1}, data.DefaultPos, false, Vector2.new()
+	local InnerStroke = Instance.new("UIStroke")
+	InnerStroke.Parent = ImageButton
+	InnerStroke.Thickness = 3
+	InnerStroke.Color = Color3.fromRGB(255, 255, 255)
+	InnerStroke.Transparency = 0.75
+
+	local OuterFrame = Instance.new("Frame")
+	OuterFrame.Parent = ImageButton
+	OuterFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+	OuterFrame.BackgroundTransparency = 1
+	OuterFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+	OuterFrame.Size = UDim2.new(1, 6, 1, 6)
+	OuterFrame.ZIndex = 1
+
+	local UICorner_Outer = Instance.new("UICorner")
+	UICorner_Outer.CornerRadius = UDim.new(1, 0)
+	UICorner_Outer.Parent = OuterFrame
+
+	local OuterStroke = Instance.new("UIStroke")
+	OuterStroke.Parent = OuterFrame
+	OuterStroke.Thickness = 3
+	OuterStroke.Color = Color3.fromRGB(0, 0, 0)
+	OuterStroke.Transparency = 0.5
+
+	local spring = {pos = 1, vel = 0, target = 1}
+	local baseTrans = {Img = 0.5, Inner = 0.75, Outer = 0.5}
+
+	local targetPosition = data.DefaultPos
+	local isDragging = false
+	local dragOffset = Vector2.new()
 
 	ImageButton.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 			if isConfigMode then
 				isDragging = true
-				dragOffset = Vector2.new(input.Position.X - ImageButton.AbsolutePosition.X, input.Position.Y - ImageButton.AbsolutePosition.Y)
+				local absPos = ImageButton.AbsolutePosition
+				dragOffset = Vector2.new(input.Position.X - absPos.X, input.Position.Y - absPos.Y)
 				spring.target = 1.2
-			else spring.target = 0.75 end
+			else
+				spring.target = 0.75
+			end
 		end
 	end)
 
 	ImageButton.InputEnded:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-			isDragging, spring.target = false, 1
-			if not isConfigMode then
-				if data.Name == "Emote" then
-					-- PERSISTENCE: Get the LATEST character on every click
-					local char = localPlayer.Character
-					local hum = char and char:FindFirstChildOfClass("Humanoid")
-					local desc = hum and hum:FindFirstChildOfClass("HumanoidDescription")
-					if desc then
-						local emotes = desc:GetEmotes()
-						emotes["Macro"] = {117301403779781}
-						desc:SetEmotes(emotes)
-						pcall(function() hum:PlayEmote("Macro") end)
+			if isConfigMode then
+				isDragging = false
+				spring.target = 1
+			else
+				spring.target = 1
+				if not isConfigMode then
+					if data.Name == "Emote" then
+						local char = localPlayer.Character
+						local hum = char and char:FindFirstChild("Humanoid")
+						local desc = hum and hum:FindFirstChild("HumanoidDescription")
+						if desc then
+							local emotes = desc:GetEmotes()
+							emotes["Macro"] = {117301403779781}
+							desc:SetEmotes(emotes)
+							hum:PlayEmote("Macro")
+						end
+					elseif data.Name == "Macro" then
+						local newState = not ImageButton:GetAttribute("IsActive")
+						ImageButton:SetAttribute("IsActive", newState)
 					end
-				elseif data.Name == "Macro" then
-					ImageButton:SetAttribute("IsActive", not ImageButton:GetAttribute("IsActive"))
 				end
 			end
 		end
 	end)
 
+	ImageButton.MouseLeave:Connect(function() 
+		if not isDragging then spring.target = 1 end
+	end)
+
 	UserInputService.InputChanged:Connect(function(input)
 		if isDragging and isConfigMode and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local halfX = ImageButton.Size.X.Offset * 0.5
+			local halfY = ImageButton.Size.Y.Offset * 0.5
+			local destX = input.Position.X - dragOffset.X + halfX
+			local destY = input.Position.Y - dragOffset.Y + halfY
+
 			local screenBounds = ScreenGui.AbsoluteSize
-			local destX = math.clamp(input.Position.X - dragOffset.X + 25, 25, screenBounds.X - 25)
-			local destY = math.clamp(input.Position.Y - dragOffset.Y + 25, 25, screenBounds.Y - 25)
+			destX = math.clamp(destX, halfX, screenBounds.X - halfX)
+			destY = math.clamp(destY, halfY, screenBounds.Y - halfY)
+
 			targetPosition = UDim2.new(0, destX, 0, destY)
 		end
 	end)
 
 	RunService.RenderStepped:Connect(function(dt)
 		dt = math.min(dt, 0.05)
-		local force = 180 * (spring.target - spring.pos)
-		spring.vel = spring.vel + (force - 24 * spring.vel) * dt
-		spring.pos = spring.pos + spring.vel * dt
+
+		if isConfigMode and not isDragging then
+			spring.target = 1
+		end
+
+		local force = TENSION * (spring.target - spring.pos)
+		spring.vel = spring.vel + (force - FRICTION * spring.vel) * dt
+		if math.abs(spring.target - spring.pos) > 0.005 or math.abs(spring.vel) > 0.1 then
+			spring.pos = spring.pos + spring.vel * dt
+		else
+			spring.pos, spring.vel = spring.target, 0
+		end
+
 		ImageButton.Size = UDim2.new(0, 50 * spring.pos, 0, 50 * spring.pos)
-		local tMod = (spring.pos < 1) and spring.pos or (1 - (spring.pos - 1))
-		local pulse = (isConfigMode and not isDragging) and (math.sin(os.clock() * 3.5) + 1) * 0.05 or 0
-		ImageButton.ImageTransparency, InnerStroke.Transparency, OuterStroke.Transparency = (0.5 * tMod) + pulse, (0.75 * tMod) + pulse, (0.5 * tMod) + pulse
-		OuterStroke.Color = (not isConfigMode and data.Name == "Macro" and ImageButton:GetAttribute("IsActive")) and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(0, 0, 0)
+
+		local tMod = 1
+		if spring.pos < 1 then
+			tMod = spring.pos
+		elseif spring.pos > 1 then
+			tMod = 1 - (spring.pos - 1)
+		end
+
+		local pulseOffset = 0
+		if isConfigMode and not isDragging then
+			pulseOffset = (math.sin(os.clock() * 3.5) + 1) * 0.05
+		end
+
+		ImageButton.ImageTransparency = (baseTrans.Img * tMod) + pulseOffset
+		InnerStroke.Transparency = (baseTrans.Inner * tMod) + pulseOffset
+		OuterStroke.Transparency = (baseTrans.Outer * tMod) + pulseOffset
+
+		if isConfigMode then
+			OuterStroke.Color = Color3.fromRGB(0, 0, 0)
+		else
+			if data.Name == "Macro" and ImageButton:GetAttribute("IsActive") then
+				OuterStroke.Color = Color3.fromRGB(0, 255, 0)
+			else
+				OuterStroke.Color = Color3.fromRGB(0, 0, 0)
+			end
+		end
+
 		ImageButton.Position = ImageButton.Position:Lerp(targetPosition, 15 * dt)
 	end)
-	
+
 	if data.Name == "Macro" then
-		local isLockActive, timer, TOGGLE_RATE = false, 0, 1/60
+		local TOGGLE_RATE = 1/60
+		local timer = 0
+		local isLockActive = false
+		local camera = workspace.CurrentCamera
+
+		ImageButton:GetAttributeChangedSignal("IsActive"):Connect(function()
+			if not ImageButton:GetAttribute("IsActive") then
+				local char = localPlayer.Character
+				local hum = char and char:FindFirstChild("Humanoid")
+				if hum then hum.AutoRotate = true end
+			end
+		end)
+
+		-- [PERSISTENCE] On respawn: deactivate Macro and restore AutoRotate on the fresh character
+		localPlayer.CharacterAdded:Connect(function(newChar)
+			ImageButton:SetAttribute("IsActive", false)
+			isLockActive = false
+			timer = 0
+			local hum = newChar:WaitForChild("Humanoid", 5)
+			if hum then hum.AutoRotate = true end
+
+			-- [PERSISTENCE] Also close config mode if it was open during death
+			if isConfigMode then
+				isConfigMode = false
+				TweenService:Create(BGFader, TI, {BackgroundTransparency = 1}):Play()
+				TweenService:Create(ScreenBlur, TI, {Size = 0}):Play()
+				TweenService:Create(ConfigIconScale, TI, {Scale = 1}):Play()
+				TweenService:Create(ConfigIcon, TI, {ImageTransparency = 0}):Play()
+				if activeConfigToast then
+					activeConfigToast:hide()
+					activeConfigToast = nil
+				end
+			end
+		end)
+
 		RunService.Heartbeat:Connect(function(dt)
 			if not ImageButton:GetAttribute("IsActive") or isConfigMode then return end
-			-- PERSISTENCE: Re-fetch everything inside the loop
-			local char = localPlayer.Character
-			local hum = char and char:FindFirstChildOfClass("Humanoid")
-			local root = char and char:FindFirstChild("HumanoidRootPart")
-			if not hum or not root then return end
-			timer += dt
-			if timer >= TOGGLE_RATE then timer = 0 isLockActive = not isLockActive end
-			if isLockActive and not hum.Sit then
-				hum.AutoRotate = false
-				local _, camYaw, _ = workspace.CurrentCamera.CFrame:ToEulerAnglesYXZ()
-				local curPitch, _, curRoll = root.CFrame:ToEulerAnglesYXZ()
-				root.CFrame = CFrame.new(root.Position) * CFrame.fromEulerAnglesYXZ(curPitch, camYaw, curRoll)
-			else hum.AutoRotate = true end
+
+			local character = localPlayer.Character
+			local humanoid = character and character:FindFirstChild("Humanoid")
+			local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+			if not humanoid or not rootPart then return end
+
+			timer = timer + dt
+			if timer >= TOGGLE_RATE then
+				timer = 0
+				isLockActive = not isLockActive
+			end
+
+			if isLockActive and not humanoid.Sit then
+				humanoid.AutoRotate = false
+				local _, camYaw, _ = camera.CFrame:ToEulerAnglesYXZ()
+				local curPitch, _, curRoll = rootPart.CFrame:ToEulerAnglesYXZ()
+				rootPart.CFrame = CFrame.new(rootPart.Position) * CFrame.fromEulerAnglesYXZ(curPitch, camYaw, curRoll)
+			else
+				humanoid.AutoRotate = true
+			end
 		end)
 	end
 end
@@ -330,4 +602,8 @@ end
 ---------------------------------------------------------
 -- INITIALIZATION NOTIFICATION
 ---------------------------------------------------------
-spawnToast("<font transparency='0.25'>Made with </font>❤️<font transparency='0.25'> by @</font><font transparency='0.1'><font weight='semibold'>mmfw</font></font><font transparency='0.5'><b>!</b></font>", 6)
+task.spawn(function()
+	local char = localPlayer.Character or localPlayer.CharacterAdded:Wait()
+	task.wait(1) 
+	spawnToast("<font transparency='0.25'>Made with </font>❤️<font transparency='0.25'> by @</font><font transparency='0.1'><font weight='semibold'>mmfw</font></font><font transparency='0.5'><b>!</b></font>", 6)
+end)
