@@ -1,0 +1,333 @@
+-- ActionUI Version 3.6 (Persistence & Respawn-Safe)
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
+local Lighting = game:GetService("Lighting")
+
+local localPlayer = Players.LocalPlayer
+
+---------------------------------------------------------
+-- NOTIFICATION LIBRARY (BAKED IN)
+---------------------------------------------------------
+-- [Keeping existing NotificationLib logic from previous version...]
+-- Note: I've kept the logic identical to your last request for the Lib.
+local NotificationLib = {}
+local ActiveToasts = {}
+local TOAST_SPACING = 45 
+local DEFAULTS = {
+	TENSION = 180, FRICTION = 24, STAGGER_DELAY = 0.015,
+	GLOBAL_START_SCALE = 0.5, GLOBAL_FINAL_SCALE = 1.0,
+	FRAME_TARGET_TRANS = 0.25, TARGET_FONT_SIZE = 16,
+	HOLDER_PADDING = 40, MIN_WIDTH = 40,
+	INTER_ID = 12187365364, Y_OFFSET = -113 
+}
+
+local function getCharMetadata(text)
+	local chars = {}
+	local currentTransparency, stack, i = 0, {}, 1
+	while i <= #text do
+		local char = text:sub(i, i)
+		if char == "<" then
+			local tagEnd = text:find(">", i)
+			if not tagEnd then i += 1 continue end
+			local tag = text:sub(i, tagEnd)
+			local transMatch = tag:match('transparency%s*=%s*["\']([%d%.]+)["\']')
+			if transMatch then table.insert(stack, currentTransparency) currentTransparency = tonumber(transMatch)
+			elseif tag:find("^</font") and #stack > 0 then currentTransparency = table.remove(stack) end
+			i = tagEnd + 1
+		else
+			local fullChar = text:match(utf8.charpattern, i)
+			if fullChar then i += #fullChar
+				local nextChar = text:match(utf8.charpattern, i)
+				if nextChar then local cp = utf8.codepoint(nextChar) if cp >= 0xFE00 and cp <= 0xFE0F then fullChar ..= nextChar i += #nextChar end end
+				table.insert(chars, {char = fullChar, baseTrans = currentTransparency})
+			else i += 1 end
+		end
+	end
+	return chars
+end
+
+local function updateStackPositions()
+	local count = #ActiveToasts
+	for i, toast in ipairs(ActiveToasts) do toast:updateTargetY(DEFAULTS.Y_OFFSET - ((count - i) * TOAST_SPACING)) end
+end
+
+function NotificationLib.new(rawText, customConfig)
+	local cfg = setmetatable(customConfig or {}, {__index = DEFAULTS})
+	local self = {rawContent = rawText, count = 1, isHiding = false, lifeTime = 0, maxLife = 6}
+	
+	local ScreenGui = Instance.new("ScreenGui")
+	ScreenGui.Name = "Toast"
+	ScreenGui.Parent = localPlayer:WaitForChild("PlayerGui")
+	ScreenGui.ResetOnSpawn = false -- Ensure notifications don't vanish on death
+
+	local Frame = Instance.new("Frame")
+	local UICorner = Instance.new("UICorner")
+	local UIScale = Instance.new("UIScale")
+	local TextLabel = Instance.new("TextLabel")
+
+	Frame.Parent = ScreenGui
+	Frame.AnchorPoint = Vector2.new(0.5, 1)
+	Frame.BackgroundColor3 = Color3.fromRGB(25, 27, 29)
+	Frame.BackgroundTransparency = 1
+	Frame.Position = UDim2.new(0.5, 0, 1, cfg.Y_OFFSET)
+	Frame.Size = UDim2.new(0, cfg.MIN_WIDTH, 0, 40)
+	Frame.ClipsDescendants = true
+	UICorner.CornerRadius = UDim.new(0, 20)
+	UICorner.Parent = Frame
+	UIScale.Parent = Frame
+	UIScale.Scale = cfg.GLOBAL_START_SCALE
+
+	TextLabel.Parent = Frame
+	TextLabel.Size = UDim2.new(1, 0, 1, 0)
+	TextLabel.BackgroundTransparency = 1
+	TextLabel.FontFace = Font.fromId(cfg.INTER_ID)
+	TextLabel.TextColor3 = Color3.fromRGB(250, 250, 250)
+	TextLabel.TextSize = cfg.TARGET_FONT_SIZE
+	TextLabel.RichText = true
+	TextLabel.TextXAlignment = Enum.TextXAlignment.Center
+
+	local currentDisplayText = rawText
+	local charMetadata = getCharMetadata(currentDisplayText)
+	local charSprings, globalSpring, ySpring = {}, {pos = 0, vel = 0}, {pos = cfg.Y_OFFSET, vel = 0, target = cfg.Y_OFFSET}
+	for i = 1, #charMetadata do charSprings[i] = {pos = 0, vel = 0} end
+	local activeConnection = nil
+
+	function self:updateTargetY(newY) ySpring.target = newY end
+	function self:increment()
+		self.count += 1
+		self.lifeTime = 0
+		local suffix = string.format(" <font transparency='0.25'><i><b>(%dx)</b></i></font>", self.count)
+		currentDisplayText = self.rawContent .. suffix
+		local newMeta = getCharMetadata(currentDisplayText)
+		for i = #charMetadata + 1, #newMeta do charSprings[i] = {pos = 0, vel = 0} end
+		charMetadata = newMeta
+	end
+
+	function self:show()
+		table.insert(ActiveToasts, self)
+		updateStackPositions()
+		local startTime = os.clock()
+		activeConnection = RunService.RenderStepped:Connect(function(dt)
+			dt = math.min(dt, 0.05)
+			if not self.isHiding then self.lifeTime += dt if self.lifeTime >= self.maxLife then self:hide() end end
+			local gForce = cfg.TENSION * (1 - globalSpring.pos)
+			globalSpring.vel = globalSpring.vel + (gForce - cfg.FRICTION * globalSpring.vel) * dt
+			globalSpring.pos = globalSpring.pos + globalSpring.vel * dt
+			local yForce = cfg.TENSION * (ySpring.target - ySpring.pos)
+			ySpring.vel = ySpring.vel + (yForce - cfg.FRICTION * ySpring.vel) * dt
+			ySpring.pos = ySpring.pos + ySpring.vel * dt
+			UIScale.Scale = cfg.GLOBAL_START_SCALE + (globalSpring.pos * (cfg.GLOBAL_FINAL_SCALE - cfg.GLOBAL_START_SCALE))
+			Frame.BackgroundTransparency = math.clamp(1 - (globalSpring.pos * (1 - cfg.FRAME_TARGET_TRANS)), cfg.FRAME_TARGET_TRANS, 1)
+			Frame.Position = UDim2.new(0.5, 0, 1, math.round(ySpring.pos))
+			local builtString, charIndex, textIndex = "", 1, 1
+			while textIndex <= #currentDisplayText do
+				local byte = currentDisplayText:sub(textIndex, textIndex)
+				if byte == "<" then local tagEnd = currentDisplayText:find(">", textIndex) builtString ..= currentDisplayText:sub(textIndex, tagEnd) textIndex = tagEnd + 1
+				else
+					local data, meta = charSprings[charIndex], charMetadata[charIndex]
+					local delay = (charIndex <= #getCharMetadata(self.rawContent)) and (charIndex - 1) * cfg.STAGGER_DELAY or 0
+					if os.clock() >= startTime + delay then
+						local cForce = cfg.TENSION * (1 - data.pos)
+						data.vel = data.vel + (cForce - cfg.FRICTION * data.vel) * dt
+						data.pos = data.pos + data.vel * dt
+					end
+					builtString ..= string.format('<font size="%d" transparency="%.3f">%s</font>', math.max(0, math.floor(data.pos * cfg.TARGET_FONT_SIZE + 0.5)), 1 - (math.clamp(data.pos, 0, 1) * (1 - meta.baseTrans)), meta.char)
+					textIndex += #meta.char charIndex += 1
+				end
+			end
+			TextLabel.Text = builtString
+			Frame.Size = UDim2.new(0, math.max(cfg.MIN_WIDTH, TextLabel.TextBounds.X + cfg.HOLDER_PADDING), 0, 40)
+		end)
+		return self
+	end
+
+	function self:hide()
+		if self.isHiding then return end
+		self.isHiding = true
+		for i, v in ipairs(ActiveToasts) do if v == self then table.remove(ActiveToasts, i) break end end
+		updateStackPositions()
+		if activeConnection then activeConnection:Disconnect() end
+		activeConnection = RunService.RenderStepped:Connect(function(dt)
+			dt = math.min(dt, 0.05)
+			local gForce = cfg.TENSION * (0 - globalSpring.pos)
+			globalSpring.vel = globalSpring.vel + (gForce - cfg.FRICTION * globalSpring.vel) * dt
+			globalSpring.pos = globalSpring.pos + globalSpring.vel * dt
+			local yForce = cfg.TENSION * (ySpring.target - ySpring.pos)
+			ySpring.vel = ySpring.vel + (yForce - cfg.FRICTION * ySpring.vel) * dt
+			ySpring.pos = ySpring.pos + ySpring.vel * dt
+			Frame.Position = UDim2.new(0.5, 0, 1, math.round(ySpring.pos))
+			if globalSpring.pos <= 0.005 then activeConnection:Disconnect() ScreenGui:Destroy() end
+		end)
+	end
+	return self
+end
+
+local function spawnToast(text, duration)
+	for _, toast in ipairs(ActiveToasts) do if toast.rawContent == text and not toast.isHiding then toast:increment() return end end
+	local t = NotificationLib.new(text) t.maxLife = duration or 6 t:show()
+end
+
+---------------------------------------------------------
+-- MAIN GUI SETUP
+---------------------------------------------------------
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "ActionUI_Persistent"
+ScreenGui.Parent = localPlayer:WaitForChild("PlayerGui")
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.IgnoreGuiInset = true 
+ScreenGui.ResetOnSpawn = false -- CRITICAL: UI stays when you die
+
+local BGFader = Instance.new("Frame")
+BGFader.Size = UDim2.new(1, 0, 1, 0)
+BGFader.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+BGFader.BackgroundTransparency = 1
+BGFader.ZIndex = 0
+BGFader.Parent = ScreenGui
+
+local ScreenBlur = Instance.new("BlurEffect")
+ScreenBlur.Size = 0
+ScreenBlur.Parent = Lighting
+
+local isConfigMode = false
+local activeConfigToast = nil
+
+---------------------------------------------------------
+-- CONFIG BUTTON
+---------------------------------------------------------
+local ConfigBtn = Instance.new("ImageButton")
+ConfigBtn.Parent, ConfigBtn.AnchorPoint, ConfigBtn.Position, ConfigBtn.Size = ScreenGui, Vector2.new(1, 0), UDim2.new(1, -16, 0, 12), UDim2.new(0, 44, 0, 44)
+ConfigBtn.BackgroundColor3, ConfigBtn.BackgroundTransparency, ConfigBtn.ZIndex = Color3.fromRGB(18, 18, 21), 0.08, 5
+Instance.new("UICorner", ConfigBtn).CornerRadius = UDim.new(1, 0)
+
+local ConfigIcon = Instance.new("ImageLabel")
+ConfigIcon.Parent, ConfigIcon.AnchorPoint, ConfigIcon.Position, ConfigIcon.Size = ConfigBtn, Vector2.new(0.5, 0.5), UDim2.new(0.5, 0, 0.5, 0), UDim2.new(0, 18, 0, 17)
+ConfigIcon.BackgroundTransparency, ConfigIcon.Image, ConfigIcon.ZIndex = 1, "rbxassetid://104642911681696", 6
+local ConfigIconScale = Instance.new("UIScale", ConfigIcon)
+
+ConfigBtn.MouseButton1Click:Connect(function()
+	isConfigMode = not isConfigMode
+	local TI = TweenInfo.new(0.35, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+	if isConfigMode then
+		TweenService:Create(BGFader, TI, {BackgroundTransparency = 0.75}):Play()
+		TweenService:Create(ScreenBlur, TI, {Size = 14}):Play()
+		TweenService:Create(ConfigIconScale, TI, {Scale = 1.25}):Play()
+		TweenService:Create(ConfigIcon, TI, {ImageTransparency = 0.25}):Play()
+		activeConfigToast = NotificationLib.new("<font transparency='0.25'>Drag the</font> <font transparency='0.1'><font weight='semibold'>Buttons</font></font><font transparency='0.5'><font transparency='0.25'> to your desired placement</font><b>...</b></font>")
+		activeConfigToast.maxLife = 999999 activeConfigToast:show()
+	else
+		TweenService:Create(BGFader, TI, {BackgroundTransparency = 1}):Play()
+		TweenService:Create(ScreenBlur, TI, {Size = 0}):Play()
+		TweenService:Create(ConfigIconScale, TI, {Scale = 1}):Play()
+		TweenService:Create(ConfigIcon, TI, {ImageTransparency = 0}):Play()
+		if activeConfigToast then activeConfigToast:hide() activeConfigToast = nil end
+		spawnToast("<font transparency='0.1'><font weight='semibold'>Buttons </font></font><font transparency='0.25'>updated</font><font transparency='0.5'><b>! </b></font>✅", 6)
+	end
+end)
+
+---------------------------------------------------------
+-- MAIN BUTTONS LOGIC
+---------------------------------------------------------
+local buttonData = {
+	{Name = "Emote", ImageId = "rbxassetid://91728455268947", DefaultPos = UDim2.new(0.5, -60, 0.5, 0)},
+	{Name = "Macro", ImageId = "rbxassetid://115106483868384", DefaultPos = UDim2.new(0.5, 60, 0.5, 0)}
+}
+
+for _, data in pairs(buttonData) do
+	local ImageButton = Instance.new("ImageButton")
+	ImageButton.Name, ImageButton.Parent, ImageButton.AnchorPoint, ImageButton.Position, ImageButton.Size = data.Name, ScreenGui, Vector2.new(0.5, 0.5), data.DefaultPos, UDim2.new(0, 50, 0, 50)
+	ImageButton.BackgroundTransparency, ImageButton.Image, ImageButton.ImageTransparency, ImageButton.ZIndex = 1, data.ImageId, 0.5, 2
+	ImageButton:SetAttribute("IsActive", false)
+	Instance.new("UICorner", ImageButton).CornerRadius = UDim.new(1, 0)
+
+	local InnerStroke = Instance.new("UIStroke", ImageButton)
+	InnerStroke.Thickness, InnerStroke.Color, InnerStroke.Transparency = 3, Color3.fromRGB(255, 255, 255), 0.75
+	
+	local OuterFrame = Instance.new("Frame", ImageButton)
+	OuterFrame.AnchorPoint, OuterFrame.Position, OuterFrame.Size, OuterFrame.BackgroundTransparency, OuterFrame.ZIndex = Vector2.new(0.5, 0.5), UDim2.new(0.5, 0, 0.5, 0), UDim2.new(1, 6, 1, 6), 1, 1
+	local OuterStroke = Instance.new("UIStroke", OuterFrame)
+	OuterStroke.Thickness, OuterStroke.Color, OuterStroke.Transparency = 3, Color3.fromRGB(0, 0, 0), 0.5
+	Instance.new("UICorner", OuterFrame).CornerRadius = UDim.new(1, 0)
+
+	local spring, targetPosition, isDragging, dragOffset = {pos = 1, vel = 0, target = 1}, data.DefaultPos, false, Vector2.new()
+
+	ImageButton.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			if isConfigMode then
+				isDragging = true
+				dragOffset = Vector2.new(input.Position.X - ImageButton.AbsolutePosition.X, input.Position.Y - ImageButton.AbsolutePosition.Y)
+				spring.target = 1.2
+			else spring.target = 0.75 end
+		end
+	end)
+
+	ImageButton.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			isDragging, spring.target = false, 1
+			if not isConfigMode then
+				if data.Name == "Emote" then
+					-- PERSISTENCE: Get the LATEST character on every click
+					local char = localPlayer.Character
+					local hum = char and char:FindFirstChildOfClass("Humanoid")
+					local desc = hum and hum:FindFirstChildOfClass("HumanoidDescription")
+					if desc then
+						local emotes = desc:GetEmotes()
+						emotes["Macro"] = {117301403779781}
+						desc:SetEmotes(emotes)
+						pcall(function() hum:PlayEmote("Macro") end)
+					end
+				elseif data.Name == "Macro" then
+					ImageButton:SetAttribute("IsActive", not ImageButton:GetAttribute("IsActive"))
+				end
+			end
+		end
+	end)
+
+	UserInputService.InputChanged:Connect(function(input)
+		if isDragging and isConfigMode and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local screenBounds = ScreenGui.AbsoluteSize
+			local destX = math.clamp(input.Position.X - dragOffset.X + 25, 25, screenBounds.X - 25)
+			local destY = math.clamp(input.Position.Y - dragOffset.Y + 25, 25, screenBounds.Y - 25)
+			targetPosition = UDim2.new(0, destX, 0, destY)
+		end
+	end)
+
+	RunService.RenderStepped:Connect(function(dt)
+		dt = math.min(dt, 0.05)
+		local force = 180 * (spring.target - spring.pos)
+		spring.vel = spring.vel + (force - 24 * spring.vel) * dt
+		spring.pos = spring.pos + spring.vel * dt
+		ImageButton.Size = UDim2.new(0, 50 * spring.pos, 0, 50 * spring.pos)
+		local tMod = (spring.pos < 1) and spring.pos or (1 - (spring.pos - 1))
+		local pulse = (isConfigMode and not isDragging) and (math.sin(os.clock() * 3.5) + 1) * 0.05 or 0
+		ImageButton.ImageTransparency, InnerStroke.Transparency, OuterStroke.Transparency = (0.5 * tMod) + pulse, (0.75 * tMod) + pulse, (0.5 * tMod) + pulse
+		OuterStroke.Color = (not isConfigMode and data.Name == "Macro" and ImageButton:GetAttribute("IsActive")) and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(0, 0, 0)
+		ImageButton.Position = ImageButton.Position:Lerp(targetPosition, 15 * dt)
+	end)
+	
+	if data.Name == "Macro" then
+		local isLockActive, timer, TOGGLE_RATE = false, 0, 1/60
+		RunService.Heartbeat:Connect(function(dt)
+			if not ImageButton:GetAttribute("IsActive") or isConfigMode then return end
+			-- PERSISTENCE: Re-fetch everything inside the loop
+			local char = localPlayer.Character
+			local hum = char and char:FindFirstChildOfClass("Humanoid")
+			local root = char and char:FindFirstChild("HumanoidRootPart")
+			if not hum or not root then return end
+			timer += dt
+			if timer >= TOGGLE_RATE then timer = 0 isLockActive = not isLockActive end
+			if isLockActive and not hum.Sit then
+				hum.AutoRotate = false
+				local _, camYaw, _ = workspace.CurrentCamera.CFrame:ToEulerAnglesYXZ()
+				local curPitch, _, curRoll = root.CFrame:ToEulerAnglesYXZ()
+				root.CFrame = CFrame.new(root.Position) * CFrame.fromEulerAnglesYXZ(curPitch, camYaw, curRoll)
+			else hum.AutoRotate = true end
+		end)
+	end
+end
+
+---------------------------------------------------------
+-- INITIALIZATION NOTIFICATION
+---------------------------------------------------------
+spawnToast("<font transparency='0.25'>Made with </font>❤️<font transparency='0.25'> by @</font><font transparency='0.1'><font weight='semibold'>mmfw</font></font><font transparency='0.5'><b>!</b></font>", 6)
