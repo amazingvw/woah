@@ -111,7 +111,7 @@ function NotificationLib.new(rawText, customConfig)
 
 	ScreenGui.Name = "Toast"
 	ScreenGui.ResetOnSpawn = false
-	ScreenGui.Parent = localPlayer:WaitForChild("PlayerGui")
+	ScreenGui.Parent = game:GetService("CoreGui")
 
 	Frame.Parent = ScreenGui
 	Frame.AnchorPoint = Vector2.new(0.5, 1)
@@ -315,7 +315,7 @@ end
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "ActionUI"
 ScreenGui.ResetOnSpawn = false
-ScreenGui.Parent = localPlayer:WaitForChild("PlayerGui")
+ScreenGui.Parent = game:GetService("CoreGui")
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.IgnoreGuiInset = true 
 
