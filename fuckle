@@ -1,48 +1,34 @@
 -- Gui to Lua 
 -- Version: 3.5 (Notification Clamping & Multiplier Physics)
 
+-- [PERSISTENCE] Kill connections and GUIs from any previous execution
+if _G.ActionUI_Cleanup then _G.ActionUI_Cleanup() end
+_G.ActionUI_Connections = {}
+_G.ActionUI_Cleanup = function()
+	for _, conn in ipairs(_G.ActionUI_Connections) do
+		pcall(function() conn:Disconnect() end)
+	end
+	_G.ActionUI_Connections = {}
+	local pg = Players.LocalPlayer and Players.LocalPlayer:FindFirstChild("PlayerGui")
+	if pg then
+		local old = pg:FindFirstChild("ActionUI")
+		if old then old:Destroy() end
+		for _, g in ipairs(pg:GetChildren()) do
+			if g.Name == "Toast" then g:Destroy() end
+		end
+	end
+	local Lighting = game:GetService("Lighting")
+	for _, e in ipairs(Lighting:GetChildren()) do
+		if e:IsA("BlurEffect") then e:Destroy() end
+	end
+end
+
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local Players = game:GetService("Players")
 local Lighting = game:GetService("Lighting")
 local localPlayer = Players.LocalPlayer
-
----------------------------------------------------------
--- [CLEANUP] Disconnect previous run's connections & destroy old GUIs
----------------------------------------------------------
-if _G._ActionUI_Cleanup then
-	_G._ActionUI_Cleanup()
-end
-
-local _trackedConnections = {}
-local function trackConn(conn)
-	table.insert(_trackedConnections, conn)
-	return conn
-end
-
-_G._ActionUI_Cleanup = function()
-	for _, conn in ipairs(_trackedConnections) do
-		pcall(function() conn:Disconnect() end)
-	end
-	_trackedConnections = {}
-
-	local pg = localPlayer:FindFirstChild("PlayerGui")
-	if pg then
-		for _, gui in ipairs(pg:GetChildren()) do
-			if gui.Name == "ActionUI" or gui.Name == "Toast" then
-				pcall(function() gui:Destroy() end)
-			end
-		end
-	end
-
-	for _, effect in ipairs(Lighting:GetChildren()) do
-		if effect:IsA("BlurEffect") then
-			pcall(function() effect:Destroy() end)
-		end
-	end
-end
----------------------------------------------------------
 
 ---------------------------------------------------------
 -- NOTIFICATION LIBRARY (BAKED IN)
@@ -512,7 +498,8 @@ for _, data in pairs(buttonData) do
 		if not isDragging then spring.target = 1 end
 	end)
 
-	UserInputService.InputChanged:Connect(function(input)
+	-- [PERSISTENCE] Track InputChanged connection so it can be cleaned up
+	local inputConn = UserInputService.InputChanged:Connect(function(input)
 		if isDragging and isConfigMode and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
 			local halfX = ImageButton.Size.X.Offset * 0.5
 			local halfY = ImageButton.Size.Y.Offset * 0.5
@@ -526,9 +513,10 @@ for _, data in pairs(buttonData) do
 			targetPosition = UDim2.new(0, destX, 0, destY)
 		end
 	end)
+	table.insert(_G.ActionUI_Connections, inputConn)
 
-	-- [CLEANUP] Tracked so it gets disconnected if the script is re-executed
-	trackConn(RunService.RenderStepped:Connect(function(dt)
+	-- [PERSISTENCE] Track RenderStepped connection so it can be cleaned up
+	local renderConn = RunService.RenderStepped:Connect(function(dt)
 		dt = math.min(dt, 0.05)
 
 		if isConfigMode and not isDragging then
@@ -572,7 +560,8 @@ for _, data in pairs(buttonData) do
 		end
 
 		ImageButton.Position = ImageButton.Position:Lerp(targetPosition, 15 * dt)
-	end))
+	end)
+	table.insert(_G.ActionUI_Connections, renderConn)
 
 	if data.Name == "Macro" then
 		local TOGGLE_RATE = 1/60
@@ -588,7 +577,7 @@ for _, data in pairs(buttonData) do
 			end
 		end)
 
-		trackConn(localPlayer.CharacterAdded:Connect(function(newChar)
+		localPlayer.CharacterAdded:Connect(function(newChar)
 			ImageButton:SetAttribute("IsActive", false)
 			isLockActive = false
 			timer = 0
@@ -606,10 +595,10 @@ for _, data in pairs(buttonData) do
 					activeConfigToast = nil
 				end
 			end
-		end))
+		end)
 
-		-- [CLEANUP] Tracked so it gets disconnected if the script is re-executed
-		trackConn(RunService.Heartbeat:Connect(function(dt)
+		-- [PERSISTENCE] Track Heartbeat connection so it can be cleaned up
+		local heartbeatConn = RunService.Heartbeat:Connect(function(dt)
 			if not ImageButton:GetAttribute("IsActive") or isConfigMode then return end
 
 			local character = localPlayer.Character
@@ -631,7 +620,8 @@ for _, data in pairs(buttonData) do
 			else
 				humanoid.AutoRotate = true
 			end
-		end))
+		end)
+		table.insert(_G.ActionUI_Connections, heartbeatConn)
 	end
 end
 
