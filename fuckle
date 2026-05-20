@@ -1,5 +1,5 @@
 -- Gui to Lua 
--- Version: 3.5 (Notification Clamping & Multiplier Physics)
+-- Version: 3.6 (Mobile Support + Responsive Positioning)
 
 -- [PERSISTENCE] Kill connections and GUIs from any previous execution
 if _G.ActionUI_Cleanup then _G.ActionUI_Cleanup() end
@@ -394,11 +394,11 @@ end)
 
 
 ---------------------------------------------------------
--- MAIN BUTTONS (Emote / Macro)
+-- MAIN BUTTONS (Emote / Macro) - FIXED WITH MOBILE SUPPORT
 ---------------------------------------------------------
 local buttonData = {
-	{Name = "Emote", ImageId = "rbxassetid://91728455268947", DefaultPos = UDim2.new(0.5, -60, 0.5, 0)},
-	{Name = "Macro", ImageId = "rbxassetid://115106483868384", DefaultPos = UDim2.new(0.5, 60, 0.5, 0)}
+	{Name = "Emote", ImageId = "rbxassetid://91728455268947", DefaultScale = Vector2.new(0.5, 0.5), DefaultOffset = Vector2.new(-60, 0)},
+	{Name = "Macro", ImageId = "rbxassetid://115106483868384", DefaultScale = Vector2.new(0.5, 0.5), DefaultOffset = Vector2.new(60, 0)}
 }
 
 local TENSION = 180
@@ -410,7 +410,7 @@ for _, data in pairs(buttonData) do
 	ImageButton.Parent = ScreenGui
 	ImageButton.AnchorPoint = Vector2.new(0.5, 0.5)
 	ImageButton.BackgroundTransparency = 1
-	ImageButton.Position = data.DefaultPos
+	ImageButton.Position = UDim2.new(data.DefaultScale.X, data.DefaultOffset.X, data.DefaultScale.Y, data.DefaultOffset.Y)
 	ImageButton.Size = UDim2.new(0, 50, 0, 50)
 	ImageButton.Image = data.ImageId
 	ImageButton.ImageTransparency = 0.5
@@ -450,16 +450,28 @@ for _, data in pairs(buttonData) do
 	local spring = {pos = 1, vel = 0, target = 1}
 	local baseTrans = {Img = 0.5, Inner = 0.75, Outer = 0.5}
 
-	local targetPosition = data.DefaultPos
+	-- FIXED: Use scale-based positioning instead of absolute offsets
+	local targetScaleX = data.DefaultScale.X
+	local targetScaleY = data.DefaultScale.Y
+	local targetOffsetX = data.DefaultOffset.X
+	local targetOffsetY = data.DefaultOffset.Y
+	
 	local isDragging = false
 	local dragOffset = Vector2.new()
+	local lastInputType = nil  -- Track if it's mouse or touch for better mobile support
 
 	ImageButton.InputBegan:Connect(function(input)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			lastInputType = input.UserInputType
 			if isConfigMode then
 				isDragging = true
 				local absPos = ImageButton.AbsolutePosition
-				dragOffset = Vector2.new(input.Position.X - absPos.X, input.Position.Y - absPos.Y)
+				local absSize = ImageButton.AbsoluteSize
+				-- Center the drag offset for better mobile experience
+				dragOffset = Vector2.new(
+					input.Position.X - (absPos.X + absSize.X * 0.5),
+					input.Position.Y - (absPos.Y + absSize.Y * 0.5)
+				)
 				spring.target = 1.2
 			else
 				spring.target = 0.75
@@ -495,22 +507,31 @@ for _, data in pairs(buttonData) do
 	end)
 
 	ImageButton.MouseLeave:Connect(function() 
-		if not isDragging then spring.target = 1 end
+		-- Only reset if not touch input (touch doesn't have MouseLeave behavior on mobile)
+		if lastInputType ~= Enum.UserInputType.Touch and not isDragging then 
+			spring.target = 1 
+		end
 	end)
 
 	-- [PERSISTENCE] Track InputChanged connection so it can be cleaned up
 	local inputConn = UserInputService.InputChanged:Connect(function(input)
 		if isDragging and isConfigMode and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-			local halfX = ImageButton.Size.X.Offset * 0.5
-			local halfY = ImageButton.Size.Y.Offset * 0.5
-			local destX = input.Position.X - dragOffset.X + halfX
-			local destY = input.Position.Y - dragOffset.Y + halfY
-
-			local screenBounds = ScreenGui.AbsoluteSize
-			destX = math.clamp(destX, halfX, screenBounds.X - halfX)
-			destY = math.clamp(destY, halfY, screenBounds.Y - halfY)
-
-			targetPosition = UDim2.new(0, destX, 0, destY)
+			local screenSize = ScreenGui.AbsoluteSize
+			local buttonSize = 50
+			
+			-- Convert absolute screen position to scale + offset
+			local centerX = input.Position.X
+			local centerY = input.Position.Y
+			
+			-- Clamp to screen bounds
+			centerX = math.clamp(centerX, buttonSize / 2, screenSize.X - buttonSize / 2)
+			centerY = math.clamp(centerY, buttonSize / 2, screenSize.Y - buttonSize / 2)
+			
+			-- Convert back to scale and offset
+			targetScaleX = centerX / screenSize.X
+			targetOffsetX = centerX - (targetScaleX * screenSize.X)
+			targetScaleY = centerY / screenSize.Y
+			targetOffsetY = centerY - (targetScaleY * screenSize.Y)
 		end
 	end)
 	table.insert(_G.ActionUI_Connections, inputConn)
@@ -559,7 +580,9 @@ for _, data in pairs(buttonData) do
 			end
 		end
 
-		ImageButton.Position = ImageButton.Position:Lerp(targetPosition, 15 * dt)
+		-- FIXED: Smooth interpolation to new scale-based position
+		local targetPos = UDim2.new(targetScaleX, targetOffsetX, targetScaleY, targetOffsetY)
+		ImageButton.Position = ImageButton.Position:Lerp(targetPos, 15 * dt)
 	end)
 	table.insert(_G.ActionUI_Connections, renderConn)
 
